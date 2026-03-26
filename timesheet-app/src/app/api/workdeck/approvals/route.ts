@@ -8,11 +8,7 @@ const API = process.env.WORKDECK_API_URL ?? 'https://api.workdeck.com'
 export interface ApprovalRow {
   id: string
   type: 'expense' | 'purchase'
-  title: string
-  amount: number | null
-  currency: string
-  submittedBy: string
-  submittedDate: string
+  requestNumber: string
   approvedDate: string
 }
 
@@ -70,9 +66,6 @@ export async function POST(req: NextRequest) {
   if (!year || !month) return NextResponse.json({ error: 'year and month required' }, { status: 400 })
 
   const auth = { Authorization: `Bearer ${token}` }
-  const lastDay = new Date(year, month, 0).getDate()
-  const start = `${year}-${String(month).padStart(2, '0')}-01`
-  const end   = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
 
   // Try admin/all-user endpoints first, fall back to /me/ if needed
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -123,19 +116,10 @@ export async function POST(req: NextRequest) {
       approvedDate: await getApprovalDate(item.id, 'expense', auth),
     })))
     for (const { item, approvedDate } of results) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const creator = item.creator ?? {}
-      const submittedBy = typeof creator === 'string'
-        ? creator
-        : `${creator?.firstName ?? ''} ${creator?.lastName ?? ''}`.trim() || 'Unknown'
       rows.push({
         id: item.id,
         type: 'expense',
-        title: item.purpose ?? item.title ?? item.name ?? item.expenseNumber ?? item.id,
-        amount: null,
-        currency: item.currency ?? item.currencyCode ?? 'EUR',
-        submittedBy,
-        submittedDate: item.createdAt ?? '',
+        requestNumber: item.expenseNumber ?? item.id,
         approvedDate,
       })
     }
@@ -149,32 +133,19 @@ export async function POST(req: NextRequest) {
       approvedDate: await getApprovalDate(item.id, 'purchase', auth),
     })))
     for (const { item, approvedDate } of results) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const creator = item.creator ?? {}
-      const submittedBy = typeof creator === 'string'
-        ? creator
-        : `${creator?.firstName ?? ''} ${creator?.lastName ?? ''}`.trim() || 'Unknown'
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const supplierName = Array.isArray(item.suppliers) && item.suppliers.length > 0
-        ? item.suppliers.map((s: any) => s.name).join(', ')
-        : null
       rows.push({
         id: item.id,
         type: 'purchase',
-        title: supplierName ?? item.purpose ?? item.name ?? item.purchaseNumber ?? item.id,
-        amount: Number(item.total ?? item.amount ?? item.totalAmount ?? 0),
-        currency: item.currency ?? item.currencyCode ?? 'EUR',
-        submittedBy,
-        submittedDate: item.createdAt ?? '',
+        requestNumber: item.purchaseNumber ?? item.id,
         approvedDate,
       })
     }
   }
 
   rows.sort((a, b) => {
-    if (!a.submittedDate) return 1
-    if (!b.submittedDate) return -1
-    return a.submittedDate.localeCompare(b.submittedDate)
+    if (!a.approvedDate) return 1
+    if (!b.approvedDate) return -1
+    return a.approvedDate.localeCompare(b.approvedDate)
   })
 
   return NextResponse.json({ rows, total: rows.length })
