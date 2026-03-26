@@ -75,22 +75,22 @@ export async function POST(req: NextRequest) {
 
   // Try admin/all-user endpoints first, fall back to /me/ if needed
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async function fetchItems(paths: string[]): Promise<{ items: any[]; usedPath: string }> {
+  async function fetchItems(paths: string[]): Promise<{ items: any[] }> {
     for (const path of paths) {
-      const res = await fetch(`${API}${path}?start=${start}&end=${end}`, { headers: auth })
+      const res = await fetch(`${API}${path}`, { headers: auth })
       if (!res.ok) continue
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const raw: any = await safeJson(res)
       if (!raw) continue
       const items = Array.isArray(raw) ? raw : (raw?.result ?? raw?.data ?? [])
-      if (Array.isArray(items)) return { items, usedPath: path }
+      if (Array.isArray(items)) return { items }
     }
-    return { items: [], usedPath: '' }
+    return { items: [] }
   }
 
-  const [{ items: expenses, usedPath: expPath }, { items: purchases, usedPath: purPath }] = await Promise.all([
-    fetchItems(['/queries/expenses', '/queries/admin/expenses', '/queries/me/expenses']),
-    fetchItems(['/queries/purchases', '/queries/admin/purchases', '/queries/me/purchases']),
+  const [{ items: expenses }, { items: purchases }] = await Promise.all([
+    fetchItems(['/queries/expenses', '/queries/me/expenses']),
+    fetchItems(['/queries/purchases', '/queries/me/purchases']),
   ])
 
   // Workdeck numeric status: 6 = approved, 3 = approved by manager
@@ -176,9 +176,5 @@ export async function POST(req: NextRequest) {
     return a.submittedDate.localeCompare(b.submittedDate)
   })
 
-  return NextResponse.json({
-    rows,
-    total: rows.length,
-    _debug: { expPath, purPath, expTotal: expenses.length, purTotal: purchases.length },
-  })
+  return NextResponse.json({ rows, total: rows.length })
 }
