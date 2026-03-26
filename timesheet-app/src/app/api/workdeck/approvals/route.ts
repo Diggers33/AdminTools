@@ -32,20 +32,19 @@ async function getApprovalDate(id: string, type: 'expense' | 'purchase', auth: R
     const raw: any = await safeJson(res)
     if (!raw) return null
     const events: unknown[] = Array.isArray(raw) ? raw : (raw?.result ?? raw?.data ?? raw?.events ?? [])
-    // Find last status-approved event
+    // Find last status-approved/accepted event
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const approvedEvents = (events as any[]).filter((e: any) =>
-      e?.type === 'updatedStatusApproved' ||
-      e?.eventType === 'updatedStatusApproved' ||
-      e?.status === 'approved' ||
-      e?.action === 'approved' ||
-      (typeof e?.type === 'string' && e.type.toLowerCase().includes('approv'))
-    )
+    const approvedEvents = (events as any[]).filter((e: any) => {
+      const t = (e?.type ?? e?.eventType ?? e?.action ?? '').toString().toLowerCase()
+      const s = (e?.status ?? e?.state ?? '').toString().toLowerCase()
+      return t.includes('approv') || t.includes('accept') || s === 'approved' || s === 'accepted'
+    })
     if (approvedEvents.length === 0) {
-      // Fallback: look for approvedAt / approvedDate fields on the events
+      // Fallback: look for approvedAt / acceptedAt fields on any event
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const ev of events as any[]) {
         if (ev?.approvedAt) return ev.approvedAt
+        if (ev?.acceptedAt) return ev.acceptedAt
         if (ev?.approvedDate) return ev.approvedDate
       }
       return null
@@ -85,11 +84,11 @@ export async function POST(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const purchases: any[] = purRaw ? (Array.isArray(purRaw) ? purRaw : (purRaw?.result ?? purRaw?.data ?? [])) : []
 
-  // Filter to approved items only
+  // Filter to approved/accepted items only
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isApproved = (item: any) => {
     const s = (item?.status ?? item?.state ?? '').toString().toLowerCase()
-    return s === 'approved' || s === 'approved_by_manager' || s === 'approved_by_finance'
+    return s === 'approved' || s === 'accepted' || s === 'approved_by_manager' || s === 'approved_by_finance'
   }
 
   const approvedExpenses = expenses.filter(isApproved)
@@ -110,11 +109,13 @@ export async function POST(req: NextRequest) {
         return { item, approvedDate }
       }))
       for (const { item, approvedDate } of results) {
-        if (!approvedDate) continue // skip items where we couldn't determine exact approval date
         const submitter = item.createdBy ?? item.submittedBy ?? item.user ?? {}
         const submittedBy = typeof submitter === 'string'
           ? submitter
           : `${submitter?.firstName ?? ''} ${submitter?.lastName ?? ''}`.trim() || 'Unknown'
+        // Use audit stream date if available, otherwise fall back to item's own approved/updated date
+        const resolvedApprovedDate = approvedDate
+          ?? item.approvedAt ?? item.acceptedAt ?? item.updatedAt ?? item.updatedStatusApproved ?? ''
         rows.push({
           id: item.id,
           type,
@@ -123,7 +124,7 @@ export async function POST(req: NextRequest) {
           currency: item.currency ?? item.currencyCode ?? 'EUR',
           submittedBy,
           submittedDate: item.createdAt ?? item.submittedAt ?? item.date ?? '',
-          approvedDate,
+          approvedDate: resolvedApprovedDate,
         })
       }
     }
@@ -141,5 +142,16 @@ export async function POST(req: NextRequest) {
     return a.approvedDate.localeCompare(b.approvedDate)
   })
 
-  return NextResponse.json({ rows, total: rows.length })
+  return NextResponse.json({
+    rows,
+    total: rows.length,
+    _debug: {
+      expensesFound: expenses.length,
+      purchasesFound: purchases.length,
+      approvedExpenses: approvedExpenses.length,
+      approvedPurchases: approvedPurchases.length,
+      expEndpointOk: expRes.ok,
+      purEndpointOk: purRes.ok,
+    }
+  })
 }
