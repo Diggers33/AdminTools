@@ -172,5 +172,16 @@ export async function POST(req: NextRequest) {
     return a.approvedDate.localeCompare(b.approvedDate)
   })
 
-  return NextResponse.json({ rows, total: rows.length })
+  return NextResponse.json({
+    rows, total: rows.length,
+    _debug: {
+      purchaseCount: purchases.length,
+      purchaseSample: purchases.slice(0, 3).map((p: any) => ({
+        id: p.id, status: p.status, state: p.state,
+        createdAt: p.createdAt, date: p.date, submittedAt: p.submittedAt, updatedAt: p.updatedAt,
+        purchaseNumber: p.purchaseNumber,
+      })),
+      approvedPurchaseCount: approvedPurchases.length,
+    }
+  })
 }
