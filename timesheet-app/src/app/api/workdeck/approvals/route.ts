@@ -9,6 +9,10 @@ export interface ApprovalRow {
   id: string
   type: 'expense' | 'purchase'
   requestNumber: string
+  projectName: string
+  description: string
+  submittedBy: string
+  approvedBy: string
   approvedDate: string
 }
 
@@ -17,7 +21,6 @@ async function safeJson(res: Response) {
   try { return JSON.parse(text) } catch { return null }
 }
 
-// Parse Workdeck date "DD/MM/YYYY HH:mm:ss+TZ" or ISO
 function parseWdDate(s: string): Date | null {
   if (!s) return null
   const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
@@ -31,45 +34,52 @@ function inMonth(dateStr: string, year: number, month: number): boolean {
   return d.getUTCFullYear() === year && d.getUTCMonth() + 1 === month
 }
 
-async function getApprovalDate(id: string, type: 'expense' | 'purchase', auth: Record<string, string>): Promise<string> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function fullName(u: any): string {
+  if (!u) return ''
+  if (typeof u === 'string') return u
+  return `${u?.firstName ?? ''} ${u?.lastName ?? ''}`.trim()
+}
+
+async function getApprovalInfo(id: string, type: 'expense' | 'purchase', auth: Record<string, string>): Promise<{ date: string; approvedBy: string }> {
   try {
     const endpoint = type === 'expense'
       ? `${API}/queries/expense-stream/${id}`
       : `${API}/queries/purchase-stream/${id}`
     const res = await fetch(endpoint, { headers: auth })
-    if (!res.ok) return ''
+    if (!res.ok) return { date: '', approvedBy: '' }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const raw: any = await safeJson(res)
-    if (!raw) return ''
+    if (!raw) return { date: '', approvedBy: '' }
     const result = raw?.result ?? raw
     for (const key of ['updatedStatusApproved', 'updatedStatusAutoApproved', 'updatedStatusProcessed']) {
       const arr = result?.[key]
       if (Array.isArray(arr) && arr.length > 0) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const last: any = arr[arr.length - 1]
-        const date = last?.date ?? last?.createdAt ?? last?.timestamp
-        if (date) return date
+        const date = last?.date ?? last?.createdAt ?? last?.timestamp ?? ''
+        const approvedBy = fullName(last?.user)
+        if (date) return { date, approvedBy }
       }
     }
-    return ''
+    return { date: '', approvedBy: '' }
   } catch {
-    return ''
+    return { date: '', approvedBy: '' }
   }
 }
-
 
 export async function POST(req: NextRequest) {
   const token = req.cookies.get('wd_token')?.value
   if (!token) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
-  const { year, month } = await req.json() as { year: number; month: number }
-  if (!year || !month) return NextResponse.json({ error: 'year and month required' }, { status: 400 })
+  const { year, months } = await req.json() as { year: number; months: number[] }
+  if (!year || !months?.length) return NextResponse.json({ error: 'year and months required' }, { status: 400 })
+  const monthSet = new Set(months)
 
   const auth = { Authorization: `Bearer ${token}` }
 
-  // Try admin/all-user endpoints first, fall back to /me/ if needed
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async function fetchItems(paths: string[]): Promise<{ items: any[] }> {
+  async function fetchItems(paths: string[]): Promise<any[]> {
     for (const path of paths) {
       const res = await fetch(`${API}${path}`, { headers: auth })
       if (!res.ok) continue
@@ -77,17 +87,16 @@ export async function POST(req: NextRequest) {
       const raw: any = await safeJson(res)
       if (!raw) continue
       const items = Array.isArray(raw) ? raw : (raw?.result ?? raw?.data ?? [])
-      if (Array.isArray(items)) return { items }
+      if (Array.isArray(items)) return items
     }
-    return { items: [] }
+    return []
   }
 
-  const [{ items: expenses }, { items: purchases }] = await Promise.all([
+  const [expenses, purchases] = await Promise.all([
     fetchItems(['/queries/expenses', '/queries/me/expenses']),
     fetchItems(['/queries/purchases', '/queries/me/purchases']),
   ])
 
-  // Workdeck numeric status: 6 = approved, 3 = approved by manager
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isApproved = (item: any) => {
     const s = item?.status ?? item?.state
@@ -96,48 +105,63 @@ export async function POST(req: NextRequest) {
     return str === 'approved' || str === 'accepted' || str === 'approved_by_manager'
   }
 
-  // Filter by approved status AND submitted in the selected month
+  const inPeriod = (dateStr: string) => {
+    const d = parseWdDate(dateStr)
+    if (!d || isNaN(d.getTime())) return false
+    return d.getUTCFullYear() === year && monthSet.has(d.getUTCMonth() + 1)
+  }
+
   const approvedExpenses = expenses.filter(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (e: any) => isApproved(e) && inMonth(e.createdAt ?? '', year, month)
+    (e: any) => isApproved(e) && inPeriod(e.createdAt ?? '')
   )
   const approvedPurchases = purchases.filter(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (p: any) => isApproved(p) && inMonth(p.createdAt ?? '', year, month)
+    (p: any) => isApproved(p) && inPeriod(p.createdAt ?? '')
   )
 
   const rows: ApprovalRow[] = []
 
-  // Process expenses (amount not available from API)
   for (let i = 0; i < approvedExpenses.length; i += 10) {
     const batch = approvedExpenses.slice(i, i + 10)
     const results = await Promise.all(batch.map(async item => ({
       item,
-      approvedDate: await getApprovalDate(item.id, 'expense', auth),
+      approval: await getApprovalInfo(item.id, 'expense', auth),
     })))
-    for (const { item, approvedDate } of results) {
+    for (const { item, approval } of results) {
       rows.push({
         id: item.id,
         type: 'expense',
         requestNumber: item.expenseNumber ?? item.id,
-        approvedDate,
+        projectName: item.project?.name ?? '',
+        description: item.purpose ?? item.title ?? item.name ?? '',
+        submittedBy: fullName(item.creator),
+        approvedBy: approval.approvedBy,
+        approvedDate: approval.date,
       })
     }
   }
 
-  // Process purchases
   for (let i = 0; i < approvedPurchases.length; i += 10) {
     const batch = approvedPurchases.slice(i, i + 10)
     const results = await Promise.all(batch.map(async item => ({
       item,
-      approvedDate: await getApprovalDate(item.id, 'purchase', auth),
+      approval: await getApprovalInfo(item.id, 'purchase', auth),
     })))
-    for (const { item, approvedDate } of results) {
+    for (const { item, approval } of results) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const supplierName = Array.isArray(item.suppliers) && item.suppliers.length > 0
+        ? item.suppliers.map((s: any) => s.name).join(', ')
+        : ''
       rows.push({
         id: item.id,
         type: 'purchase',
         requestNumber: item.purchaseNumber ?? item.id,
-        approvedDate,
+        projectName: item.project?.name ?? '',
+        description: supplierName || (item.purpose ?? item.name ?? ''),
+        submittedBy: fullName(item.creator),
+        approvedBy: approval.approvedBy,
+        approvedDate: approval.date,
       })
     }
   }
