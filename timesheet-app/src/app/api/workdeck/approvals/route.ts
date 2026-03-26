@@ -24,8 +24,8 @@ async function safeJson(res: Response) {
 async function getApprovalDate(id: string, type: 'expense' | 'purchase', auth: Record<string, string>): Promise<string | null> {
   try {
     const endpoint = type === 'expense'
-      ? `${API}/queries/expense-stream/${id}`
-      : `${API}/queries/purchase-stream/${id}`
+      ? `${API}/queries/me/expense-stream/${id}`
+      : `${API}/queries/me/purchase-stream/${id}`
     const res = await fetch(endpoint, { headers: auth })
     if (!res.ok) return null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -70,8 +70,8 @@ export async function POST(req: NextRequest) {
 
   // Fetch expenses and purchases in parallel
   const [expRes, purRes] = await Promise.all([
-    fetch(`${API}/queries/expenses?start=${start}&end=${end}`, { headers: auth }),
-    fetch(`${API}/queries/purchases?start=${start}&end=${end}`, { headers: auth }),
+    fetch(`${API}/queries/me/expenses?start=${start}&end=${end}`, { headers: auth }),
+    fetch(`${API}/queries/me/purchases?start=${start}&end=${end}`, { headers: auth }),
   ])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
