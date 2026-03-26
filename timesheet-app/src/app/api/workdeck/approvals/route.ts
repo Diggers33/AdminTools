@@ -63,33 +63,43 @@ async function getApprovalDate(id: string, type: 'expense' | 'purchase', auth: R
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getExpenseDetail(id: string, auth: Record<string, string>): Promise<{ amount: number; _probe?: any }> {
-  const candidates = [
+  const getUrls = [
     `${API}/queries/expenses/${id}`,
+    `${API}/queries/expense/${id}`,
     `${API}/queries/expense-lines/${id}`,
+    `${API}/queries/expense-line/${id}`,
     `${API}/queries/expense-lines?expenseId=${id}`,
-    `${API}/queries/me/expense-lines/${id}`,
+    `${API}/queries/expense-lines?expense=${id}`,
+    `${API}/queries/expenses/detail/${id}`,
   ]
-  for (const url of candidates) {
+  for (const url of getUrls) {
     try {
       const res = await fetch(url, { headers: auth })
       if (!res.ok) continue
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const raw: any = await safeJson(res)
       if (!raw) continue
-      // Single object with total
       if (raw?.total !== undefined) return { amount: Number(raw.total) }
       if (raw?.result?.total !== undefined) return { amount: Number(raw.result.total) }
-      // Array of line items — sum them
       const items = Array.isArray(raw) ? raw : (raw?.result ?? raw?.data ?? raw?.lines ?? raw?.expenseLines ?? [])
       if (Array.isArray(items) && items.length > 0) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const total = items.reduce((s: number, l: any) => s + Number(l?.amount ?? l?.total ?? l?.subtotal ?? 0), 0)
         return { amount: total, _probe: { url, sample: items[0] } }
       }
-      // Return probe so we can see what the working endpoint returns
       return { amount: 0, _probe: { url, raw } }
     } catch { continue }
   }
+  // Last resort: check stream for amount in finalized/processed events
+  try {
+    const res = await fetch(`${API}/queries/expense-stream/${id}`, { headers: auth })
+    if (res.ok) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw: any = await safeJson(res)
+      const result = raw?.result ?? raw
+      return { amount: 0, _probe: { streamKeys: Object.keys(result ?? {}), stream: result } }
+    }
+  } catch { /* ignore */ }
   return { amount: 0 }
 }
 
