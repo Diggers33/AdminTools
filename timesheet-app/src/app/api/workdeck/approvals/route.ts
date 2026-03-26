@@ -179,7 +179,8 @@ export async function POST(req: NextRequest) {
         submittedBy,
         submittedDate: item.createdAt ?? '',
         approvedDate,
-      })
+        _probe: expenseDetail._probe,
+      } as ApprovalRow & { _probe?: unknown })
     }
   }
 
