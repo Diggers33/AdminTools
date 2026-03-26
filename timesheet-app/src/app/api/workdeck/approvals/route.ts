@@ -150,8 +150,8 @@ export async function POST(req: NextRequest) {
       purchasesFound: purchases.length,
       approvedExpenses: approvedExpenses.length,
       approvedPurchases: approvedPurchases.length,
-      expEndpointOk: expRes.ok,
-      purEndpointOk: purRes.ok,
+      expEndpointStatus: expRes.status,
+      purEndpointStatus: purRes.status,
     }
   })
 }
