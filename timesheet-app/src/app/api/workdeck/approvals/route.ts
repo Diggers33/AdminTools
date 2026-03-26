@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
       const raw: any = await safeJson(res)
       if (!raw) continue
       const items = Array.isArray(raw) ? raw : (raw?.result ?? raw?.data ?? [])
-      if (Array.isArray(items)) return items
+      if (Array.isArray(items) && items.length > 0) return items
     }
     return []
   }
@@ -172,16 +172,5 @@ export async function POST(req: NextRequest) {
     return a.approvedDate.localeCompare(b.approvedDate)
   })
 
-  return NextResponse.json({
-    rows, total: rows.length,
-    _debug: {
-      purchaseCount: purchases.length,
-      purchaseSample: purchases.slice(0, 3).map((p: any) => ({
-        id: p.id, status: p.status, state: p.state,
-        createdAt: p.createdAt, date: p.date, submittedAt: p.submittedAt, updatedAt: p.updatedAt,
-        purchaseNumber: p.purchaseNumber,
-      })),
-      approvedPurchaseCount: approvedPurchases.length,
-    }
-  })
+  return NextResponse.json({ rows, total: rows.length })
 }
