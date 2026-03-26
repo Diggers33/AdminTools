@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import JSZip from 'jszip'
 import ApprovalsSection from '@/components/ApprovalsSection'
+import LandingPage from '@/components/LandingPage'
 
 interface Project { project: string; hours: number }
 interface Employee { name: string; projects: Project[]; totalHours: number; travelDayCount?: number; holidayDayCount?: number; sickDayCount?: number; meetingCount?: number; maxAvailableHours?: number; hoursAnomaly?: boolean }
@@ -62,7 +63,7 @@ export default function Home() {
   const [workdeckEmail, setWorkdeckEmail] = useState('')
   const [workdeckData, setWorkdeckData] = useState<{ holidays: Record<string, number[]>; meetings: Record<string, Record<string, Record<number, number>>> } | null>(null)
   const [workdeckLoading, setWorkdeckLoading] = useState(false)
-  const [activeSection, setActiveSection] = useState<'timesheets' | 'approvals'>('timesheets')
+  const [activeTool, setActiveTool] = useState<'timesheets' | 'approvals' | null>(null)
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
@@ -355,6 +356,10 @@ export default function Home() {
   const totalTravelDays = employees.filter(e => selectedEmployees.has(e.name)).reduce((s, e) => s + (e.travelDayCount || 0), 0)
   const STEPS = ['upload', 'configure', 'preview', 'done'] as const
 
+  if (activeTool === null) return <LandingPage onSelect={(id) => setActiveTool(id as 'timesheets' | 'approvals')} />
+
+  const toolLabel = activeTool === 'timesheets' ? 'Timesheet Verification Tool' : 'Approval Checker'
+
   return (
     <div style={{ minHeight: '100vh', background: '#f0f4fa', color: '#8aaac8', fontFamily: "'Georgia', serif" }}>
       {/* Header */}
@@ -362,25 +367,32 @@ export default function Home() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
           <IRISLogo />
           <div style={{ width: 1, height: 32, background: '#1a3a6a' }} />
-          <div>
-            <div style={{ fontSize: 10, letterSpacing: 3, color: '#7ab0e8', textTransform: 'uppercase', marginBottom: 2 }}>Internal Tool</div>
-            <div style={{ fontSize: 15, fontWeight: 400, color: '#ffffff', letterSpacing: 0.5 }}>Timesheet Verification Tool</div>
-          </div>
+          <button onClick={() => setActiveTool(null)} style={{
+            background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            display: 'flex', flexDirection: 'column', gap: 2, textAlign: 'left',
+          }}>
+            <div style={{ fontSize: 10, letterSpacing: 3, color: '#4a7ab8', textTransform: 'uppercase' }}>
+              Internal Admin Tools
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 400, color: '#ffffff', letterSpacing: 0.5 }}>
+              {toolLabel}
+            </div>
+          </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
-          {/* Section nav tabs */}
-          {(['timesheets', 'approvals'] as const).map(sec => (
-            <button key={sec} onClick={() => setActiveSection(sec)} style={{
+          {/* Tool nav tabs */}
+          {(['timesheets', 'approvals'] as const).map(t => (
+            <button key={t} onClick={() => setActiveTool(t)} style={{
               background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0',
               fontSize: 12, fontFamily: 'Georgia, serif', letterSpacing: 1.5, textTransform: 'uppercase',
-              color: activeSection === sec ? '#7ab0e8' : '#3a6a9a',
-              borderBottom: `2px solid ${activeSection === sec ? '#0066cc' : 'transparent'}`,
+              color: activeTool === t ? '#7ab0e8' : '#3a6a9a',
+              borderBottom: `2px solid ${activeTool === t ? '#0066cc' : 'transparent'}`,
               transition: 'all 0.2s'
-            }}>{sec === 'timesheets' ? 'Timesheets' : 'Approvals'}</button>
+            }}>{t === 'timesheets' ? 'Timesheet Verification Tool' : 'Approval Checker'}</button>
           ))}
 
           {/* Step indicator — show only in timesheets section, hide during generating */}
-          {activeSection === 'timesheets' && step !== 'generating' && (
+          {activeTool === 'timesheets' && step !== 'generating' && (
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 12 }}>
               {STEPS.map((s, i) => (
                 <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -400,9 +412,9 @@ export default function Home() {
         </div>
       </header>
 
-      {activeSection === 'approvals' && <ApprovalsSection />}
+      {activeTool === 'approvals' && <ApprovalsSection />}
 
-      <main style={{ maxWidth: 880, margin: '0 auto', padding: '44px 24px', display: activeSection === 'approvals' ? 'none' : undefined }}>
+      <main style={{ maxWidth: 880, margin: '0 auto', padding: '44px 24px', display: activeTool === 'approvals' ? 'none' : undefined }}>
         {error && (
           <div style={{ background: '#fff5f0', border: '1px solid #f0c8b8', borderRadius: 8, padding: '12px 16px', marginBottom: 24, color: '#ff7070', fontSize: 14 }}>
             ⚠ {error}
