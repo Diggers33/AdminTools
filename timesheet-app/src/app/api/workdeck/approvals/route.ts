@@ -21,6 +21,78 @@ async function safeJson(res: Response) {
   try { return JSON.parse(text) } catch { return null }
 }
 
+// Parse Workdeck date format: "DD/MM/YYYY HH:mm:ss+TZ" or ISO
+function parseWdDate(s: string): Date | null {
+  if (!s) return null
+  // DD/MM/YYYY HH:mm:ss+TZ
+  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+  if (m) return new Date(`${m[3]}-${m[2]}-${m[1]}T00:00:00Z`)
+  return new Date(s)
+}
+
+async function getApprovalDate(id: string, type: 'expense' | 'purchase', auth: Record<string, string>): Promise<string | null> {
+  try {
+    const endpoint = type === 'expense'
+      ? `${API}/queries/expense-stream/${id}`
+      : `${API}/queries/purchase-stream/${id}`
+    const res = await fetch(endpoint, { headers: auth })
+    if (!res.ok) return null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw: any = await safeJson(res)
+    if (!raw) return null
+    const result = raw?.result ?? raw
+    // Try approved → auto-approved → processed in that order
+    const candidates = [
+      result?.updatedStatusApproved,
+      result?.updatedStatusAutoApproved,
+      result?.updatedStatusProcessed,
+    ]
+    for (const arr of candidates) {
+      if (Array.isArray(arr) && arr.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const last: any = arr[arr.length - 1]
+        const date = last?.date ?? last?.createdAt ?? last?.timestamp
+        if (date) return date
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getExpenseAmount(id: string, auth: Record<string, string>): Promise<{ amount: number; _probe?: any }> {
+  // Probe multiple possible endpoints for expense line totals
+  const candidates = [
+    `${API}/queries/expense-lines/${id}`,
+    `${API}/queries/me/expense-lines/${id}`,
+    `${API}/queries/expense-lines?expenseId=${id}`,
+    `${API}/queries/expenses/${id}`,
+  ]
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { headers: auth })
+      if (!res.ok) continue
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw: any = await safeJson(res)
+      if (!raw) continue
+      const items = Array.isArray(raw) ? raw : (raw?.result ?? raw?.data ?? raw?.lines ?? raw?.expenseLines ?? [])
+      if (Array.isArray(items) && items.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const total = items.reduce((s: number, l: any) => s + Number(l?.amount ?? l?.total ?? l?.subtotal ?? 0), 0)
+        return { amount: total }
+      }
+      // Maybe it returned a single object with total
+      if (raw?.total !== undefined) return { amount: Number(raw.total) }
+      if (raw?.result?.total !== undefined) return { amount: Number(raw.result.total) }
+      // Return probe for first working endpoint so we can inspect it
+      return { amount: 0, _probe: { url, raw } }
+    } catch { continue }
+  }
+  return { amount: 0 }
+}
+
 export async function POST(req: NextRequest) {
   const token = req.cookies.get('wd_token')?.value
   if (!token) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
@@ -33,7 +105,6 @@ export async function POST(req: NextRequest) {
   const start = `${year}-${String(month).padStart(2, '0')}-01`
   const end   = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
 
-  // Fetch expenses and purchases in parallel
   const [expRes, purRes] = await Promise.all([
     fetch(`${API}/queries/me/expenses?start=${start}&end=${end}`, { headers: auth }),
     fetch(`${API}/queries/me/purchases?start=${start}&end=${end}`, { headers: auth }),
@@ -49,27 +120,102 @@ export async function POST(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const purchases: any[] = purRaw ? (Array.isArray(purRaw) ? purRaw : (purRaw?.result ?? purRaw?.data ?? [])) : []
 
-  // Probe: fetch detail + stream for first expense and first purchase
-  const firstExp = expenses[0]
-  const firstPur = purchases[0]
-
-  const [expDetailRes, expStreamMeRes, expStreamRootRes, purDetailRes, purStreamMeRes] = await Promise.all([
-    firstExp ? fetch(`${API}/queries/me/expenses/${firstExp.id}`, { headers: auth }) : Promise.resolve(null),
-    firstExp ? fetch(`${API}/queries/me/expense-stream/${firstExp.id}`, { headers: auth }) : Promise.resolve(null),
-    firstExp ? fetch(`${API}/queries/expense-stream/${firstExp.id}`, { headers: auth }) : Promise.resolve(null),
-    firstPur ? fetch(`${API}/queries/me/purchases/${firstPur.id}`, { headers: auth }) : Promise.resolve(null),
-    firstPur ? fetch(`${API}/queries/me/purchase-stream/${firstPur.id}`, { headers: auth }) : Promise.resolve(null),
-  ])
-
+  // Workdeck uses numeric status: 6 = approved, 3 = approved by manager
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const probe: Record<string, any> = {
-    expDetail:       expDetailRes    ? { status: expDetailRes.status,    body: await safeJson(expDetailRes)    } : null,
-    expStreamMe:     expStreamMeRes  ? { status: expStreamMeRes.status,  body: await safeJson(expStreamMeRes)  } : null,
-    expStreamRoot:   expStreamRootRes? { status: expStreamRootRes.status, body: await safeJson(expStreamRootRes)} : null,
-    purDetail:       purDetailRes    ? { status: purDetailRes.status,    body: await safeJson(purDetailRes)    } : null,
-    purStreamMe:     purStreamMeRes  ? { status: purStreamMeRes.status,  body: await safeJson(purStreamMeRes)  } : null,
-    purchaseSample:  firstPur ?? null,
+  const isApproved = (item: any) => {
+    const s = item?.status ?? item?.state
+    if (typeof s === 'number') return s === 6 || s === 3
+    const str = String(s ?? '').toLowerCase()
+    return str === 'approved' || str === 'accepted' || str === 'approved_by_manager'
   }
 
-  return NextResponse.json({ _probe: probe })
+  const approvedExpenses = expenses.filter(isApproved)
+  const approvedPurchases = purchases.filter(isApproved)
+
+  const rows: ApprovalRow[] = []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let expenseAmountProbe: any = null
+
+  // Process expenses
+  for (let i = 0; i < approvedExpenses.length; i += 10) {
+    const batch = approvedExpenses.slice(i, i + 10)
+    const results = await Promise.all(batch.map(async item => {
+      const [approvedDate, amountResult] = await Promise.all([
+        getApprovalDate(item.id, 'expense', auth),
+        getExpenseAmount(item.id, auth),
+      ])
+      return { item, approvedDate, amountResult }
+    }))
+    for (const { item, approvedDate, amountResult } of results) {
+      if (amountResult._probe && !expenseAmountProbe) expenseAmountProbe = amountResult._probe
+      // Filter by approval date falling in the selected month/year
+      if (approvedDate) {
+        const d = parseWdDate(approvedDate)
+        if (d && (d.getUTCFullYear() !== year || d.getUTCMonth() + 1 !== month)) continue
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const creator = item.creator ?? {}
+      const submittedBy = typeof creator === 'string'
+        ? creator
+        : `${creator?.firstName ?? ''} ${creator?.lastName ?? ''}`.trim() || 'Unknown'
+      rows.push({
+        id: item.id,
+        type: 'expense',
+        title: item.purpose ?? item.title ?? item.name ?? item.expenseNumber ?? item.id,
+        amount: amountResult.amount,
+        currency: item.currency ?? item.currencyCode ?? 'EUR',
+        submittedBy,
+        submittedDate: item.createdAt ?? '',
+        approvedDate: approvedDate ?? '',
+      })
+    }
+  }
+
+  // Process purchases
+  for (let i = 0; i < approvedPurchases.length; i += 10) {
+    const batch = approvedPurchases.slice(i, i + 10)
+    const results = await Promise.all(batch.map(async item => {
+      const approvedDate = await getApprovalDate(item.id, 'purchase', auth)
+      return { item, approvedDate }
+    }))
+    for (const { item, approvedDate } of results) {
+      // Filter by approval date falling in the selected month/year
+      if (approvedDate) {
+        const d = parseWdDate(approvedDate)
+        if (d && (d.getUTCFullYear() !== year || d.getUTCMonth() + 1 !== month)) continue
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const creator = item.creator ?? {}
+      const submittedBy = typeof creator === 'string'
+        ? creator
+        : `${creator?.firstName ?? ''} ${creator?.lastName ?? ''}`.trim() || 'Unknown'
+      // Purchase title: use first supplier name, else purchase number
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const supplierName = Array.isArray(item.suppliers) && item.suppliers.length > 0
+        ? item.suppliers.map((s: any) => s.name).join(', ')
+        : null
+      rows.push({
+        id: item.id,
+        type: 'purchase',
+        title: supplierName ?? item.purpose ?? item.name ?? item.purchaseNumber ?? item.id,
+        amount: Number(item.total ?? item.amount ?? item.totalAmount ?? 0),
+        currency: item.currency ?? item.currencyCode ?? 'EUR',
+        submittedBy,
+        submittedDate: item.createdAt ?? '',
+        approvedDate: approvedDate ?? '',
+      })
+    }
+  }
+
+  rows.sort((a, b) => {
+    if (!a.approvedDate) return 1
+    if (!b.approvedDate) return -1
+    return a.approvedDate.localeCompare(b.approvedDate)
+  })
+
+  return NextResponse.json({
+    rows,
+    total: rows.length,
+    _debug: expenseAmountProbe ? { expenseAmountProbe } : undefined,
+  })
 }
