@@ -61,6 +61,38 @@ async function getApprovalDate(id: string, type: 'expense' | 'purchase', auth: R
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getExpenseDetail(id: string, auth: Record<string, string>): Promise<{ amount: number; _probe?: any }> {
+  const candidates = [
+    `${API}/queries/expenses/${id}`,
+    `${API}/queries/expense-lines/${id}`,
+    `${API}/queries/expense-lines?expenseId=${id}`,
+    `${API}/queries/me/expense-lines/${id}`,
+  ]
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { headers: auth })
+      if (!res.ok) continue
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw: any = await safeJson(res)
+      if (!raw) continue
+      // Single object with total
+      if (raw?.total !== undefined) return { amount: Number(raw.total) }
+      if (raw?.result?.total !== undefined) return { amount: Number(raw.result.total) }
+      // Array of line items — sum them
+      const items = Array.isArray(raw) ? raw : (raw?.result ?? raw?.data ?? raw?.lines ?? raw?.expenseLines ?? [])
+      if (Array.isArray(items) && items.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const total = items.reduce((s: number, l: any) => s + Number(l?.amount ?? l?.total ?? l?.subtotal ?? 0), 0)
+        return { amount: total, _probe: { url, sample: items[0] } }
+      }
+      // Return probe so we can see what the working endpoint returns
+      return { amount: 0, _probe: { url, raw } }
+    } catch { continue }
+  }
+  return { amount: 0 }
+}
+
 export async function POST(req: NextRequest) {
   const token = req.cookies.get('wd_token')?.value
   if (!token) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
@@ -120,8 +152,9 @@ export async function POST(req: NextRequest) {
     const results = await Promise.all(batch.map(async item => ({
       item,
       approvedDate: await getApprovalDate(item.id, 'expense', auth),
+      expenseDetail: await getExpenseDetail(item.id, auth),
     })))
-    for (const { item, approvedDate } of results) {
+    for (const { item, approvedDate, expenseDetail } of results) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const creator = item.creator ?? {}
       const submittedBy = typeof creator === 'string'
@@ -131,7 +164,7 @@ export async function POST(req: NextRequest) {
         id: item.id,
         type: 'expense',
         title: item.purpose ?? item.title ?? item.name ?? item.expenseNumber ?? item.id,
-        amount: Number(item.amount ?? item.totalAmount ?? item.total ?? 0),
+        amount: expenseDetail.amount,
         currency: item.currency ?? item.currencyCode ?? 'EUR',
         submittedBy,
         submittedDate: item.createdAt ?? '',
@@ -176,5 +209,8 @@ export async function POST(req: NextRequest) {
     return a.submittedDate.localeCompare(b.submittedDate)
   })
 
-  return NextResponse.json({ rows, total: rows.length })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const amountProbe = (rows as any[]).find(r => r._probe)?._probe
+  rows.forEach((r: any) => delete r._probe)
+  return NextResponse.json({ rows, total: rows.length, _debug: amountProbe ?? undefined })
 }
