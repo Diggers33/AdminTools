@@ -84,11 +84,13 @@ export async function POST(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const purchases: any[] = purRaw ? (Array.isArray(purRaw) ? purRaw : (purRaw?.result ?? purRaw?.data ?? [])) : []
 
-  // Filter to approved/accepted items only
+  // Filter to approved items — Workdeck uses numeric status (6 = approved, 3 = approved by manager)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isApproved = (item: any) => {
-    const s = (item?.status ?? item?.state ?? '').toString().toLowerCase()
-    return s === 'approved' || s === 'accepted' || s === 'approved_by_manager' || s === 'approved_by_finance'
+    const s = item?.status ?? item?.state
+    if (typeof s === 'number') return s === 6 || s === 3
+    const str = String(s ?? '').toLowerCase()
+    return str === 'approved' || str === 'accepted' || str === 'approved_by_manager'
   }
 
   const approvedExpenses = expenses.filter(isApproved)
@@ -109,18 +111,17 @@ export async function POST(req: NextRequest) {
         return { item, approvedDate }
       }))
       for (const { item, approvedDate } of results) {
-        const submitter = item.createdBy ?? item.submittedBy ?? item.user ?? {}
-        const submittedBy = typeof submitter === 'string'
-          ? submitter
-          : `${submitter?.firstName ?? ''} ${submitter?.lastName ?? ''}`.trim() || 'Unknown'
-        // Use audit stream date if available, otherwise fall back to item's own approved/updated date
+        const creator = item.creator ?? item.createdBy ?? item.submittedBy ?? item.user ?? {}
+        const submittedBy = typeof creator === 'string'
+          ? creator
+          : `${creator?.firstName ?? ''} ${creator?.lastName ?? ''}`.trim() || 'Unknown'
         const resolvedApprovedDate = approvedDate
-          ?? item.approvedAt ?? item.acceptedAt ?? item.updatedAt ?? item.updatedStatusApproved ?? ''
+          ?? item.approvedAt ?? item.acceptedAt ?? item.processedAt ?? item.updatedAt ?? ''
         rows.push({
           id: item.id,
           type,
-          title: item.title ?? item.description ?? item.name ?? `${type} ${item.id}`,
-          amount: Number(item.amount ?? item.total ?? item.totalAmount ?? 0),
+          title: item.purpose ?? item.title ?? item.description ?? item.name ?? `${type} ${item.id}`,
+          amount: Number(item.amount ?? item.totalAmount ?? item.total ?? item.grossAmount ?? 0),
           currency: item.currency ?? item.currencyCode ?? 'EUR',
           submittedBy,
           submittedDate: item.createdAt ?? item.submittedAt ?? item.date ?? '',
@@ -156,7 +157,7 @@ export async function POST(req: NextRequest) {
       expenseStatuses: Array.from(new Set(expenses.map((e: any) => e?.status ?? e?.state ?? '(none)'))),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       purchaseStatuses: Array.from(new Set(purchases.map((p: any) => p?.status ?? p?.state ?? '(none)'))),
-      expenseSample: expenses[0] ? Object.keys(expenses[0]) : [],
+      expenseSample: expenses.find((e: any) => isApproved(e)) ?? expenses[0] ?? null,
     }
   })
 }
