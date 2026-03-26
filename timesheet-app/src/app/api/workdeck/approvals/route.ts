@@ -9,7 +9,7 @@ export interface ApprovalRow {
   id: string
   type: 'expense' | 'purchase'
   title: string
-  amount: number
+  amount: number | null
   currency: string
   submittedBy: string
   submittedDate: string
@@ -61,20 +61,6 @@ async function getApprovalDate(id: string, type: 'expense' | 'purchase', auth: R
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function getExpenseDetail(id: string, auth: Record<string, string>): Promise<{ amount: number; _probe?: any }> {
-  try {
-    const res = await fetch(`${API}/queries/expense-stream/${id}`, { headers: auth })
-    if (!res.ok) return { amount: 0 }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw: any = await safeJson(res)
-    const result = raw?.result ?? raw
-    // Return full stream so we can inspect what approved events contain
-    return { amount: 0, _probe: result }
-  } catch {
-    return { amount: 0 }
-  }
-}
 
 export async function POST(req: NextRequest) {
   const token = req.cookies.get('wd_token')?.value
@@ -128,18 +114,15 @@ export async function POST(req: NextRequest) {
   )
 
   const rows: ApprovalRow[] = []
-  let amountProbe: unknown = undefined
 
-  // Process expenses
+  // Process expenses (amount not available from API)
   for (let i = 0; i < approvedExpenses.length; i += 10) {
     const batch = approvedExpenses.slice(i, i + 10)
     const results = await Promise.all(batch.map(async item => ({
       item,
       approvedDate: await getApprovalDate(item.id, 'expense', auth),
-      expenseDetail: await getExpenseDetail(item.id, auth),
     })))
-    for (const { item, approvedDate, expenseDetail } of results) {
-      if (!amountProbe && expenseDetail._probe) amountProbe = expenseDetail._probe
+    for (const { item, approvedDate } of results) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const creator = item.creator ?? {}
       const submittedBy = typeof creator === 'string'
@@ -149,7 +132,7 @@ export async function POST(req: NextRequest) {
         id: item.id,
         type: 'expense',
         title: item.purpose ?? item.title ?? item.name ?? item.expenseNumber ?? item.id,
-        amount: expenseDetail.amount,
+        amount: null,
         currency: item.currency ?? item.currencyCode ?? 'EUR',
         submittedBy,
         submittedDate: item.createdAt ?? '',
@@ -194,5 +177,5 @@ export async function POST(req: NextRequest) {
     return a.submittedDate.localeCompare(b.submittedDate)
   })
 
-  return NextResponse.json({ rows, total: rows.length, _debug: amountProbe ?? undefined })
+  return NextResponse.json({ rows, total: rows.length })
 }

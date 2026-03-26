@@ -12,7 +12,8 @@ function formatDate(iso: string) {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-function formatAmount(amount: number, currency: string) {
+function formatAmount(amount: number | null, currency: string) {
+  if (amount === null) return '—'
   try {
     return new Intl.NumberFormat('en-GB', { style: 'currency', currency, minimumFractionDigits: 2 }).format(amount)
   } catch {
@@ -73,13 +74,13 @@ export default function ApprovalsSection() {
           let cmp = 0
           if (sortKey === 'approvedDate') cmp = (a.approvedDate ?? '').localeCompare(b.approvedDate ?? '')
           else if (sortKey === 'submittedBy') cmp = a.submittedBy.localeCompare(b.submittedBy)
-          else if (sortKey === 'amount') cmp = a.amount - b.amount
+          else if (sortKey === 'amount') cmp = (a.amount ?? 0) - (b.amount ?? 0)
           else if (sortKey === 'type') cmp = a.type.localeCompare(b.type)
           return sortDir === 'asc' ? cmp : -cmp
         })
     : null
 
-  const totalAmount = displayed?.reduce((s, r) => s + r.amount, 0) ?? 0
+  const totalAmount = displayed?.reduce((s, r) => s + (r.amount ?? 0), 0) ?? 0
 
   const SortIcon = ({ col }: { col: typeof sortKey }) =>
     sortKey === col
