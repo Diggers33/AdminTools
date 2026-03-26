@@ -7,18 +7,19 @@ export const maxDuration = 60
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
-    const reportsFile = formData.get('reports') as File | null
-    const travelFile  = formData.get('travel') as File | null
-    const leaveFile   = formData.get('leave') as File | null
-    const monthStr    = formData.get('month') as string | null
-    const yearStr     = formData.get('year') as string | null
+    const reportsFile   = formData.get('reports') as File | null
+    const travelFile    = formData.get('travel') as File | null
+    const leaveFile     = formData.get('leave') as File | null
+    const monthStr      = formData.get('month') as string | null
+    const yearStr       = formData.get('year') as string | null
+    const parsedRowsStr = formData.get('parsedReports') as string | null
 
-    if (!reportsFile) return NextResponse.json({ error: 'No reports file uploaded' }, { status: 400 })
+    if (!reportsFile && !parsedRowsStr) return NextResponse.json({ error: 'No reports file uploaded' }, { status: 400 })
 
-    const reportsBuffer = await reportsFile.arrayBuffer()
+    const reportsBuffer = reportsFile ? await reportsFile.arrayBuffer() : null
 
     if (!monthStr || !yearStr) {
-      const { employees, months } = parseReportsFile(reportsBuffer)
+      const { employees, months } = parseReportsFile(reportsBuffer!)
       return NextResponse.json({ employees, months })
     }
 
@@ -28,7 +29,6 @@ export async function POST(req: NextRequest) {
     const leaveBuffer  = leaveFile  ? await leaveFile.arrayBuffer()  : null
     const sickFile     = formData.get('sick') as File | null
     const sickBuffer   = sickFile   ? await sickFile.arrayBuffer()   : null
-    const parsedRowsStr = formData.get('parsedReports') as string | null
     const reportsInput: ArrayBuffer | ParsedReportsRow[] = parsedRowsStr
       ? (JSON.parse(parsedRowsStr) as ParsedReportsRow[])
       : reportsBuffer!
