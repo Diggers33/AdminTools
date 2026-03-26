@@ -16,6 +16,12 @@ export async function GET(req: NextRequest) {
     '/queries/purchases',
     '/queries/admin/expenses',
     '/queries/admin/purchases',
+    '/queries/expense-admin/expenses',
+    '/queries/purchase-admin/purchases',
+    '/queries/expense-role/expenses',
+    '/queries/purchase-role/purchases',
+    '/queries/role/expenses',
+    '/queries/role/purchases',
     '/queries/company/expenses',
     '/queries/company/purchases',
     '/queries/finance/expenses',
@@ -27,6 +33,8 @@ export async function GET(req: NextRequest) {
     '/queries/expense-reports',
     '/queries/purchase-orders',
     '/queries/purchase-requests',
+    '/queries/expenses?all=true',
+    '/queries/purchases?all=true',
   ]
 
   const results = await Promise.all(candidates.map(async path => {
