@@ -92,15 +92,27 @@ export async function POST(req: NextRequest) {
     return []
   }
 
-  const [expenses, purchases] = await Promise.all([
+  const [expenses, ...purchaseBatches] = await Promise.all([
     fetchItems(['/queries/expenses', '/queries/me/expenses']),
-    fetchItems(['/queries/purchases?status=6', '/queries/purchases?status=3', '/queries/me/purchases']),
+    fetchItems(['/queries/purchases?status=5']),
+    fetchItems(['/queries/purchases?status=6']),
+    fetchItems(['/queries/purchases?status=7']),
   ])
+  // Merge all purchase statuses, deduplicate by id
+  const purchaseMap = new Map<string, unknown>()
+  for (const batch of purchaseBatches) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const item of batch) purchaseMap.set((item as any).id, item)
+  }
+  // Fall back to /me/purchases if none found via status params
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let purchases: any[] = Array.from(purchaseMap.values())
+  if (purchases.length === 0) purchases = await fetchItems(['/queries/me/purchases'])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isApproved = (item: any) => {
     const s = item?.status ?? item?.state
-    if (typeof s === 'number') return s === 6 || s === 3
+    if (typeof s === 'number') return s === 3 || s === 5 || s === 6 || s === 7
     const str = String(s ?? '').toLowerCase()
     return str === 'approved' || str === 'accepted' || str === 'approved_by_manager'
   }
