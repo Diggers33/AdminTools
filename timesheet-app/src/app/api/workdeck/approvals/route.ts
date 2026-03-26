@@ -92,39 +92,9 @@ export async function POST(req: NextRequest) {
     return []
   }
 
-  // Debug: probe purchase endpoints directly
-  const purchaseProbe: Record<string, unknown> = {}
-  for (const path of [
-    '/queries/purchases', '/queries/me/purchases',
-    '/queries/team/purchases', '/queries/manager/purchases',
-    '/queries/managed/purchases', '/queries/approvals/purchases',
-    '/queries/purchases/all', '/queries/purchases/team',
-    '/queries/purchases?all=true', '/queries/purchases?managed=true',
-  ]) {
-    const r = await fetch(`${API}${path}`, { headers: auth })
-    const txt = await r.text()
-    let parsed: unknown = null
-    try { parsed = JSON.parse(txt) } catch { parsed = txt.slice(0, 200) }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const p = parsed as any
-    purchaseProbe[path] = {
-      status: r.status,
-      isArray: Array.isArray(p),
-      resultIsArray: Array.isArray(p?.result),
-      dataIsArray: Array.isArray(p?.data),
-      topKeys: p && typeof p === 'object' ? Object.keys(p).slice(0, 10) : null,
-      resultLength: Array.isArray(p?.result) ? p.result.length : null,
-      arrayLength: Array.isArray(p) ? p.length : null,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      sample: (Array.isArray(p) ? p : Array.isArray(p?.result) ? p.result : []).slice(0, 2).map((x: any) => ({
-        id: x.id, status: x.status, state: x.state, createdAt: x.createdAt, purchaseNumber: x.purchaseNumber
-      }))
-    }
-  }
-
   const [expenses, purchases] = await Promise.all([
     fetchItems(['/queries/expenses', '/queries/me/expenses']),
-    fetchItems(['/queries/purchases', '/queries/me/purchases']),
+    fetchItems(['/queries/purchases?status=6', '/queries/purchases?status=3', '/queries/me/purchases']),
   ])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -202,5 +172,5 @@ export async function POST(req: NextRequest) {
     return a.approvedDate.localeCompare(b.approvedDate)
   })
 
-  return NextResponse.json({ rows, total: rows.length, _debug: { purchaseProbe } })
+  return NextResponse.json({ rows, total: rows.length })
 }
