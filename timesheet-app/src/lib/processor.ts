@@ -384,8 +384,17 @@ export function parseReportsFile(buffer: ArrayBuffer): {
   return { employees: Array.from(employeeSet).sort(), months }
 }
 
+// Compact row format sent from the browser after client-side parsing
+export interface ParsedReportsRow {
+  fullName: string
+  project: string
+  year: number
+  month: number
+  hours: number
+}
+
 export function extractEmployeeData(
-  reportsBuffer: ArrayBuffer,
+  reportsInput: ArrayBuffer | ParsedReportsRow[],
   month: number,
   year: number,
   travelBuffer?: ArrayBuffer | null,
@@ -393,27 +402,37 @@ export function extractEmployeeData(
   workdeckData?: { holidays: Record<string, number[]>; meetings: Record<string, Record<string, Record<number, number>>> } | null,
   sickLeaveBuffer?: ArrayBuffer | null
 ): EmployeeMonth[] {
-  const wb = XLSX.read(reportsBuffer, { type: 'array', cellDates: true })
-  const ws = wb.Sheets['DATOS']
-  if (!ws) throw new Error('DATOS sheet not found')
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { header: 0, defval: null })
-
   const employeeMap = new Map<string, Map<string, number>>()
 
-  for (const row of rows) {
-    const fecha = row['Fecha']
-    if (!(fecha instanceof Date)) continue
-    if (fecha.getFullYear() !== year || fecha.getMonth() + 1 !== month) continue
-    const nombre   = String(row['Nombre'] || '').trim()
-    const apellido = String(row['Apellido'] || '').trim()
-    if (!nombre || !apellido || nombre === 'Nombre') continue
-    const fullName = `${nombre} ${apellido}`
-    const project  = String(row['Project'] || '').trim()
-    const hours    = Number(row['Hours']) || 0
-    if (!project || hours <= 0) continue
-    if (!employeeMap.has(fullName)) employeeMap.set(fullName, new Map())
-    const projMap = employeeMap.get(fullName)!
-    projMap.set(project, (projMap.get(project) || 0) + hours)
+  if (Array.isArray(reportsInput)) {
+    // Pre-parsed rows supplied by the client (avoids large file upload)
+    for (const row of reportsInput) {
+      if (row.year !== year || row.month !== month) continue
+      if (!row.fullName || !row.project || row.hours <= 0) continue
+      if (!employeeMap.has(row.fullName)) employeeMap.set(row.fullName, new Map())
+      const projMap = employeeMap.get(row.fullName)!
+      projMap.set(row.project, (projMap.get(row.project) || 0) + row.hours)
+    }
+  } else {
+    const wb = XLSX.read(reportsInput, { type: 'array', cellDates: true })
+    const ws = wb.Sheets['DATOS']
+    if (!ws) throw new Error('DATOS sheet not found')
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { header: 0, defval: null })
+    for (const row of rows) {
+      const fecha = row['Fecha']
+      if (!(fecha instanceof Date)) continue
+      if (fecha.getFullYear() !== year || fecha.getMonth() + 1 !== month) continue
+      const nombre   = String(row['Nombre'] || '').trim()
+      const apellido = String(row['Apellido'] || '').trim()
+      if (!nombre || !apellido || nombre === 'Nombre') continue
+      const fullName = `${nombre} ${apellido}`
+      const project  = String(row['Project'] || '').trim()
+      const hours    = Number(row['Hours']) || 0
+      if (!project || hours <= 0) continue
+      if (!employeeMap.has(fullName)) employeeMap.set(fullName, new Map())
+      const projMap = employeeMap.get(fullName)!
+      projMap.set(project, (projMap.get(project) || 0) + hours)
+    }
   }
 
   const reportNames = Array.from(employeeMap.keys())

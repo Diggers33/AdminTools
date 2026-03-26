@@ -40,6 +40,7 @@ const Spinner = () => {
 export default function Home() {
   const [step, setStep] = useState<Step>('upload')
   const [reportsFile, setReportsFile] = useState<File | null>(null)
+  const [parsedReportsRows, setParsedReportsRows] = useState<{fullName:string;project:string;year:number;month:number;hours:number}[] | null>(null)
   const [travelFile, setTravelFile] = useState<File | null>(null)
   const [leaveFile, setLeaveFile] = useState<File | null>(null)
   const [sickFile, setSickFile] = useState<File | null>(null)
@@ -128,13 +129,36 @@ export default function Home() {
     setError(null)
     setStep('generating')
     setStatusMsg('Reading reports file…')
-    const fd = new FormData()
-    fd.append('reports', reportsFile)
     try {
-      const res = await fetch('/api/preview', { method: 'POST', body: fd })
-      const data = await safeJson(res)
-      if (!res.ok) throw new Error(data.error)
-      setMonths(data.months)
+      // Parse entirely in the browser — avoids uploading the full file to Vercel
+      const XLSX = await import('xlsx')
+      const buffer = await reportsFile.arrayBuffer()
+      const wb = XLSX.read(buffer, { type: 'array', cellDates: true })
+      const ws = wb.Sheets['DATOS']
+      if (!ws) throw new Error('DATOS sheet not found in the uploaded file')
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { header: 0, defval: null })
+
+      const rows: {fullName:string;project:string;year:number;month:number;hours:number}[] = []
+      const monthSet = new Set<string>()
+      for (const row of rawRows) {
+        const fecha = row['Fecha']
+        if (!(fecha instanceof Date)) continue
+        const y = fecha.getFullYear(); const m = fecha.getMonth() + 1
+        const nombre = String(row['Nombre'] || '').trim()
+        const apellido = String(row['Apellido'] || '').trim()
+        if (!nombre || !apellido || nombre === 'Nombre') continue
+        const project = String(row['Project'] || '').trim()
+        const hours = Number(row['Hours']) || 0
+        if (!project || hours <= 0) continue
+        rows.push({ fullName: `${nombre} ${apellido}`, project, year: y, month: m, hours })
+        monthSet.add(`${y}-${String(m).padStart(2, '0')}`)
+      }
+      const months = Array.from(monthSet).sort().map(k => {
+        const [y, mo] = k.split('-').map(Number)
+        return { label: new Date(y, mo - 1, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' }), month: mo, year: y }
+      })
+      setParsedReportsRows(rows)
+      setMonths(months)
       setStep('configure')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to read file')
@@ -148,7 +172,12 @@ export default function Home() {
     setStep('generating')
     setStatusMsg('Loading employee data…')
     const fd = new FormData()
-    fd.append('reports', reportsFile)
+    if (parsedReportsRows) {
+      const monthRows = parsedReportsRows.filter(r => r.year === selectedMonth.year && r.month === selectedMonth.month)
+      fd.append('parsedReports', JSON.stringify(monthRows))
+    } else if (reportsFile) {
+      fd.append('reports', reportsFile)
+    }
     if (travelFile) fd.append('travel', travelFile)
     if (leaveFile) fd.append('leave', leaveFile)
     if (sickFile) fd.append('sick', sickFile)
@@ -204,7 +233,12 @@ export default function Home() {
     setStatusMsg(`Building ${selectedEmployees.size} timesheets for ${selectedMonth.label}…`)
     setError(null)
     const fd = new FormData()
-    fd.append('reports', reportsFile)
+    if (parsedReportsRows) {
+      const monthRows = parsedReportsRows.filter(r => r.year === selectedMonth.year && r.month === selectedMonth.month)
+      fd.append('parsedReports', JSON.stringify(monthRows))
+    } else if (reportsFile) {
+      fd.append('reports', reportsFile)
+    }
     if (travelFile) fd.append('travel', travelFile)
     if (leaveFile) fd.append('leave', leaveFile)
     if (sickFile) fd.append('sick', sickFile)
@@ -308,7 +342,7 @@ export default function Home() {
   }
 
   const handleReset = () => {
-    setStep('upload'); setReportsFile(null); setTravelFile(null); setLeaveFile(null); setMonths([])
+    setStep('upload'); setReportsFile(null); setParsedReportsRows(null); setTravelFile(null); setLeaveFile(null); setMonths([])
     setSelectedMonth(null); setEmployees([]); setSelectedEmployees(new Set())
     setError(null); setVerifyReport(null); setVerifying(false); setFixing(false); setExpandedVerify(null)
     setWorkdeckData(null)

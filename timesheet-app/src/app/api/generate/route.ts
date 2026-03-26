@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { extractEmployeeData } from '@/lib/processor'
+import { extractEmployeeData, ParsedReportsRow } from '@/lib/processor'
 import { generateTimesheet } from '@/lib/excel'
 import JSZip from 'jszip'
 
@@ -16,22 +16,27 @@ export async function POST(req: NextRequest) {
     const yearStr          = formData.get('year') as string | null
     const selectedStr      = formData.get('selectedEmployees') as string | null
 
-    if (!reportsFile) return NextResponse.json({ error: 'Reports file required' }, { status: 400 })
+    const hasParsedReports = !!(formData.get('parsedReports') as string | null)
+    if (!reportsFile && !hasParsedReports) return NextResponse.json({ error: 'Reports file required' }, { status: 400 })
     if (!monthStr || !yearStr) return NextResponse.json({ error: 'Month and year required' }, { status: 400 })
 
     const month = parseInt(monthStr)
     const year  = parseInt(yearStr)
     const selected: string[] | null = selectedStr ? JSON.parse(selectedStr) : null
 
-    const reportsBuffer = await reportsFile.arrayBuffer()
+    const reportsBuffer = reportsFile ? await reportsFile.arrayBuffer() : null
     const travelBuffer  = travelFile ? await travelFile.arrayBuffer() : null
     const leaveBuffer   = leaveFile  ? await leaveFile.arrayBuffer()  : null
     const sickFile      = formData.get('sick') as File | null
     const sickBuffer    = sickFile   ? await sickFile.arrayBuffer()   : null
     const workdeckDataStr = formData.get('workdeckData') as string | null
     const workdeckData = workdeckDataStr ? JSON.parse(workdeckDataStr) : null
+    const parsedRowsStr = formData.get('parsedReports') as string | null
+    const reportsInput: ArrayBuffer | ParsedReportsRow[] = parsedRowsStr
+      ? (JSON.parse(parsedRowsStr) as ParsedReportsRow[])
+      : reportsBuffer!
 
-    let employees = extractEmployeeData(reportsBuffer, month, year, travelBuffer, leaveBuffer, workdeckData, sickBuffer)
+    let employees = extractEmployeeData(reportsInput, month, year, travelBuffer, leaveBuffer, workdeckData, sickBuffer)
     if (selected && selected.length > 0) {
       const sel = new Set(selected)
       employees = employees.filter(e => sel.has(e.name))

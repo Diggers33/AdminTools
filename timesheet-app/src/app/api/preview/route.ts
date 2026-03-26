@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { parseReportsFile, extractEmployeeData, getWorkingDays } from '@/lib/processor'
+import { parseReportsFile, extractEmployeeData, getWorkingDays, ParsedReportsRow } from '@/lib/processor'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -28,8 +28,12 @@ export async function POST(req: NextRequest) {
     const leaveBuffer  = leaveFile  ? await leaveFile.arrayBuffer()  : null
     const sickFile     = formData.get('sick') as File | null
     const sickBuffer   = sickFile   ? await sickFile.arrayBuffer()   : null
+    const parsedRowsStr = formData.get('parsedReports') as string | null
+    const reportsInput: ArrayBuffer | ParsedReportsRow[] = parsedRowsStr
+      ? (JSON.parse(parsedRowsStr) as ParsedReportsRow[])
+      : reportsBuffer!
 
-    const employees = extractEmployeeData(reportsBuffer, month, year, travelBuffer, leaveBuffer, null, sickBuffer)
+    const employees = extractEmployeeData(reportsInput, month, year, travelBuffer, leaveBuffer, null, sickBuffer)
 
     if (employees.length === 0) {
       return NextResponse.json({ error: `No employee data found for ${month}/${year}` }, { status: 404 })
