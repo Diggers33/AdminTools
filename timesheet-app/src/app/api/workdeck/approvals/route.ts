@@ -94,7 +94,13 @@ export async function POST(req: NextRequest) {
 
   // Debug: probe purchase endpoints directly
   const purchaseProbe: Record<string, unknown> = {}
-  for (const path of ['/queries/purchases', '/queries/me/purchases']) {
+  for (const path of [
+    '/queries/purchases', '/queries/me/purchases',
+    '/queries/team/purchases', '/queries/manager/purchases',
+    '/queries/managed/purchases', '/queries/approvals/purchases',
+    '/queries/purchases/all', '/queries/purchases/team',
+    '/queries/purchases?all=true', '/queries/purchases?managed=true',
+  ]) {
     const r = await fetch(`${API}${path}`, { headers: auth })
     const txt = await r.text()
     let parsed: unknown = null
