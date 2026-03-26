@@ -155,6 +155,7 @@ export async function POST(req: NextRequest) {
   )
 
   const rows: ApprovalRow[] = []
+  let amountProbe: unknown = undefined
 
   // Process expenses
   for (let i = 0; i < approvedExpenses.length; i += 10) {
@@ -165,6 +166,7 @@ export async function POST(req: NextRequest) {
       expenseDetail: await getExpenseDetail(item.id, auth),
     })))
     for (const { item, approvedDate, expenseDetail } of results) {
+      if (!amountProbe && expenseDetail._probe) amountProbe = expenseDetail._probe
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const creator = item.creator ?? {}
       const submittedBy = typeof creator === 'string'
@@ -179,8 +181,7 @@ export async function POST(req: NextRequest) {
         submittedBy,
         submittedDate: item.createdAt ?? '',
         approvedDate,
-        _probe: expenseDetail._probe,
-      } as ApprovalRow & { _probe?: unknown })
+      })
     }
   }
 
@@ -220,8 +221,5 @@ export async function POST(req: NextRequest) {
     return a.submittedDate.localeCompare(b.submittedDate)
   })
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const amountProbe = (rows as any[]).find(r => r._probe)?._probe
-  rows.forEach((r: any) => delete r._probe)
   return NextResponse.json({ rows, total: rows.length, _debug: amountProbe ?? undefined })
 }
