@@ -21,41 +21,6 @@ async function safeJson(res: Response) {
   try { return JSON.parse(text) } catch { return null }
 }
 
-async function getApprovalDate(id: string, type: 'expense' | 'purchase', auth: Record<string, string>): Promise<string | null> {
-  try {
-    const endpoint = type === 'expense'
-      ? `${API}/queries/me/expense-stream/${id}`
-      : `${API}/queries/me/purchase-stream/${id}`
-    const res = await fetch(endpoint, { headers: auth })
-    if (!res.ok) return null
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw: any = await safeJson(res)
-    if (!raw) return null
-    const events: unknown[] = Array.isArray(raw) ? raw : (raw?.result ?? raw?.data ?? raw?.events ?? [])
-    // Find last status-approved/accepted event
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const approvedEvents = (events as any[]).filter((e: any) => {
-      const t = (e?.type ?? e?.eventType ?? e?.action ?? '').toString().toLowerCase()
-      const s = (e?.status ?? e?.state ?? '').toString().toLowerCase()
-      return t.includes('approv') || t.includes('accept') || s === 'approved' || s === 'accepted'
-    })
-    if (approvedEvents.length === 0) {
-      // Fallback: look for approvedAt / acceptedAt fields on any event
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (const ev of events as any[]) {
-        if (ev?.approvedAt) return ev.approvedAt
-        if (ev?.acceptedAt) return ev.acceptedAt
-        if (ev?.approvedDate) return ev.approvedDate
-      }
-      return null
-    }
-    const last = approvedEvents[approvedEvents.length - 1]
-    return last?.date ?? last?.createdAt ?? last?.timestamp ?? null
-  } catch {
-    return null
-  }
-}
-
 export async function POST(req: NextRequest) {
   const token = req.cookies.get('wd_token')?.value
   if (!token) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
@@ -84,80 +49,27 @@ export async function POST(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const purchases: any[] = purRaw ? (Array.isArray(purRaw) ? purRaw : (purRaw?.result ?? purRaw?.data ?? [])) : []
 
-  // Filter to approved items — Workdeck uses numeric status (6 = approved, 3 = approved by manager)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const isApproved = (item: any) => {
-    const s = item?.status ?? item?.state
-    if (typeof s === 'number') return s === 6 || s === 3
-    const str = String(s ?? '').toLowerCase()
-    return str === 'approved' || str === 'accepted' || str === 'approved_by_manager'
-  }
+  // Probe: fetch detail + stream for first expense and first purchase
+  const firstExp = expenses[0]
+  const firstPur = purchases[0]
 
-  const approvedExpenses = expenses.filter(isApproved)
-  const approvedPurchases = purchases.filter(isApproved)
-
-  // Batch-fetch audit streams (10 at a time) to get exact approval dates
-  const rows: ApprovalRow[] = []
-
-  const fetchBatch = async (
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    items: any[],
-    type: 'expense' | 'purchase'
-  ) => {
-    for (let i = 0; i < items.length; i += 10) {
-      const batch = items.slice(i, i + 10)
-      const results = await Promise.all(batch.map(async item => {
-        const approvedDate = await getApprovalDate(item.id, type, auth)
-        return { item, approvedDate }
-      }))
-      for (const { item, approvedDate } of results) {
-        const creator = item.creator ?? item.createdBy ?? item.submittedBy ?? item.user ?? {}
-        const submittedBy = typeof creator === 'string'
-          ? creator
-          : `${creator?.firstName ?? ''} ${creator?.lastName ?? ''}`.trim() || 'Unknown'
-        const resolvedApprovedDate = approvedDate
-          ?? item.approvedAt ?? item.acceptedAt ?? item.processedAt ?? item.updatedAt ?? ''
-        rows.push({
-          id: item.id,
-          type,
-          title: item.purpose ?? item.title ?? item.description ?? item.name ?? `${type} ${item.id}`,
-          amount: Number(item.amount ?? item.totalAmount ?? item.total ?? item.grossAmount ?? 0),
-          currency: item.currency ?? item.currencyCode ?? 'EUR',
-          submittedBy,
-          submittedDate: item.createdAt ?? item.submittedAt ?? item.date ?? '',
-          approvedDate: resolvedApprovedDate,
-        })
-      }
-    }
-  }
-
-  await Promise.all([
-    fetchBatch(approvedExpenses, 'expense'),
-    fetchBatch(approvedPurchases, 'purchase'),
+  const [expDetailRes, expStreamMeRes, expStreamRootRes, purDetailRes, purStreamMeRes] = await Promise.all([
+    firstExp ? fetch(`${API}/queries/me/expenses/${firstExp.id}`, { headers: auth }) : Promise.resolve(null),
+    firstExp ? fetch(`${API}/queries/me/expense-stream/${firstExp.id}`, { headers: auth }) : Promise.resolve(null),
+    firstExp ? fetch(`${API}/queries/expense-stream/${firstExp.id}`, { headers: auth }) : Promise.resolve(null),
+    firstPur ? fetch(`${API}/queries/me/purchases/${firstPur.id}`, { headers: auth }) : Promise.resolve(null),
+    firstPur ? fetch(`${API}/queries/me/purchase-stream/${firstPur.id}`, { headers: auth }) : Promise.resolve(null),
   ])
 
-  // Sort by approval date ascending
-  rows.sort((a, b) => {
-    if (!a.approvedDate) return 1
-    if (!b.approvedDate) return -1
-    return a.approvedDate.localeCompare(b.approvedDate)
-  })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const probe: Record<string, any> = {
+    expDetail:       expDetailRes    ? { status: expDetailRes.status,    body: await safeJson(expDetailRes)    } : null,
+    expStreamMe:     expStreamMeRes  ? { status: expStreamMeRes.status,  body: await safeJson(expStreamMeRes)  } : null,
+    expStreamRoot:   expStreamRootRes? { status: expStreamRootRes.status, body: await safeJson(expStreamRootRes)} : null,
+    purDetail:       purDetailRes    ? { status: purDetailRes.status,    body: await safeJson(purDetailRes)    } : null,
+    purStreamMe:     purStreamMeRes  ? { status: purStreamMeRes.status,  body: await safeJson(purStreamMeRes)  } : null,
+    purchaseSample:  firstPur ?? null,
+  }
 
-  return NextResponse.json({
-    rows,
-    total: rows.length,
-    _debug: {
-      expensesFound: expenses.length,
-      purchasesFound: purchases.length,
-      approvedExpenses: approvedExpenses.length,
-      approvedPurchases: approvedPurchases.length,
-      expEndpointStatus: expRes.status,
-      purEndpointStatus: purRes.status,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expenseStatuses: Array.from(new Set(expenses.map((e: any) => e?.status ?? e?.state ?? '(none)'))),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      purchaseStatuses: Array.from(new Set(purchases.map((p: any) => p?.status ?? p?.state ?? '(none)'))),
-      expenseSample: expenses.find((e: any) => isApproved(e)) ?? expenses[0] ?? null,
-    }
-  })
+  return NextResponse.json({ _probe: probe })
 }
