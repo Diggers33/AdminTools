@@ -152,6 +152,11 @@ export async function POST(req: NextRequest) {
       approvedPurchases: approvedPurchases.length,
       expEndpointStatus: expRes.status,
       purEndpointStatus: purRes.status,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expenseStatuses: [...new Set(expenses.map((e: any) => e?.status ?? e?.state ?? '(none)'))],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      purchaseStatuses: [...new Set(purchases.map((p: any) => p?.status ?? p?.state ?? '(none)'))],
+      expenseSample: expenses[0] ? Object.keys(expenses[0]) : [],
     }
   })
 }
