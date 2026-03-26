@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import JSZip from 'jszip'
+import ApprovalsSection from '@/components/ApprovalsSection'
 
 interface Project { project: string; hours: number }
 interface Employee { name: string; projects: Project[]; totalHours: number; travelDayCount?: number; holidayDayCount?: number; sickDayCount?: number; meetingCount?: number; maxAvailableHours?: number; hoursAnomaly?: boolean }
@@ -61,6 +62,7 @@ export default function Home() {
   const [workdeckEmail, setWorkdeckEmail] = useState('')
   const [workdeckData, setWorkdeckData] = useState<{ holidays: Record<string, number[]>; meetings: Record<string, Record<string, Record<number, number>>> } | null>(null)
   const [workdeckLoading, setWorkdeckLoading] = useState(false)
+  const [activeSection, setActiveSection] = useState<'timesheets' | 'approvals'>('timesheets')
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
@@ -365,27 +367,42 @@ export default function Home() {
             <div style={{ fontSize: 15, fontWeight: 400, color: '#ffffff', letterSpacing: 0.5 }}>Timesheet Verification Tool</div>
           </div>
         </div>
-        {/* Step indicator — hide during generating */}
-        {step !== 'generating' && (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            {STEPS.map((s, i) => (
-              <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{
-                  width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 10, fontFamily: 'monospace',
-                  background: step === s ? '#1da35a' : i < STEPS.indexOf(step) ? '#0d3a1a' : '#111118',
-                  color: step === s ? '#fff' : i < STEPS.indexOf(step) ? '#1da35a' : '#3a3a5a',
-                  border: `1px solid ${step === s ? '#0066cc' : i < STEPS.indexOf(step) ? '#0066cc' : '#c8d8ed'}`,
-                  transition: 'all 0.3s'
-                }}>{i + 1}</div>
-                {i < STEPS.length - 1 && <div style={{ width: 16, height: 1, background: '#1a2a1a' }} />}
-              </div>
-            ))}
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+          {/* Section nav tabs */}
+          {(['timesheets', 'approvals'] as const).map(sec => (
+            <button key={sec} onClick={() => setActiveSection(sec)} style={{
+              background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0',
+              fontSize: 12, fontFamily: 'Georgia, serif', letterSpacing: 1.5, textTransform: 'uppercase',
+              color: activeSection === sec ? '#7ab0e8' : '#3a6a9a',
+              borderBottom: `2px solid ${activeSection === sec ? '#0066cc' : 'transparent'}`,
+              transition: 'all 0.2s'
+            }}>{sec === 'timesheets' ? 'Timesheets' : 'Approvals'}</button>
+          ))}
+
+          {/* Step indicator — show only in timesheets section, hide during generating */}
+          {activeSection === 'timesheets' && step !== 'generating' && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 12 }}>
+              {STEPS.map((s, i) => (
+                <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{
+                    width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 10, fontFamily: 'monospace',
+                    background: step === s ? '#1da35a' : i < STEPS.indexOf(step) ? '#0d3a1a' : '#111118',
+                    color: step === s ? '#fff' : i < STEPS.indexOf(step) ? '#1da35a' : '#3a3a5a',
+                    border: `1px solid ${step === s ? '#0066cc' : i < STEPS.indexOf(step) ? '#0066cc' : '#c8d8ed'}`,
+                    transition: 'all 0.3s'
+                  }}>{i + 1}</div>
+                  {i < STEPS.length - 1 && <div style={{ width: 16, height: 1, background: '#1a2a1a' }} />}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </header>
 
-      <main style={{ maxWidth: 880, margin: '0 auto', padding: '44px 24px' }}>
+      {activeSection === 'approvals' && <ApprovalsSection />}
+
+      <main style={{ maxWidth: 880, margin: '0 auto', padding: '44px 24px', display: activeSection === 'approvals' ? 'none' : undefined }}>
         {error && (
           <div style={{ background: '#fff5f0', border: '1px solid #f0c8b8', borderRadius: 8, padding: '12px 16px', marginBottom: 24, color: '#ff7070', fontSize: 14 }}>
             ⚠ {error}
