@@ -26,7 +26,7 @@ export default function ApprovalsSection() {
   const [error, setError] = useState<string | null>(null)
   const [rows, setRows] = useState<ApprovalRow[] | null>(null)
   const [sortKey, setSortKey] = useState<SortKey>('approvedDate')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   const years = Array.from({ length: 4 }, (_, i) => currentYear - i)
 
@@ -92,7 +92,7 @@ export default function ApprovalsSection() {
         .filter(r => filter === 'all' || r.type === filter)
         .sort((a, b) => {
           let cmp = 0
-          if (sortKey === 'approvedDate') cmp = (a.approvedDate ?? '').localeCompare(b.approvedDate ?? '')
+          if (sortKey === 'approvedDate') cmp = (a.approvedDate || a.createdAt || '').localeCompare(b.approvedDate || b.createdAt || '')
           else if (sortKey === 'type') cmp = a.type.localeCompare(b.type)
           else if (sortKey === 'requestNumber') cmp = a.requestNumber.localeCompare(b.requestNumber)
           else if (sortKey === 'projectName') cmp = (a.projectName ?? '').localeCompare(b.projectName ?? '')

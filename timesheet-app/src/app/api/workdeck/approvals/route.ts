@@ -14,6 +14,7 @@ export interface ApprovalRow {
   submittedBy: string
   approvedBy: string
   approvedDate: string
+  createdAt: string
 }
 
 async function safeJson(res: Response) {
@@ -150,6 +151,7 @@ export async function POST(req: NextRequest) {
         submittedBy: fullName(item.creator),
         approvedBy: approval.approvedBy,
         approvedDate: approval.date,
+        createdAt: item.createdAt ?? '',
       })
     }
   }
@@ -174,14 +176,17 @@ export async function POST(req: NextRequest) {
         submittedBy: fullName(item.creator),
         approvedBy: approval.approvedBy,
         approvedDate: approval.date,
+        createdAt: item.createdAt ?? '',
       })
     }
   }
 
   rows.sort((a, b) => {
-    if (!a.approvedDate) return 1
-    if (!b.approvedDate) return -1
-    return a.approvedDate.localeCompare(b.approvedDate)
+    const da = a.approvedDate || a.createdAt
+    const db = b.approvedDate || b.createdAt
+    if (!da) return 1
+    if (!db) return -1
+    return db.localeCompare(da) // descending — newest first
   })
 
   return NextResponse.json({ rows, total: rows.length })
