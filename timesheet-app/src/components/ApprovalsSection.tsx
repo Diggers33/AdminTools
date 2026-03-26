@@ -5,11 +5,17 @@ import type { ApprovalRow } from '@/app/api/workdeck/approvals/route'
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
+function parseDate(s: string): Date | null {
+  if (!s) return null
+  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+  const d = m ? new Date(`${m[3]}-${m[2]}-${m[1]}T00:00:00Z`) : new Date(s)
+  return isNaN(d.getTime()) ? null : d
+}
+
 function formatDate(iso: string) {
   if (!iso) return '—'
-  const m = iso.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
-  const d = m ? new Date(`${m[3]}-${m[2]}-${m[1]}`) : new Date(iso)
-  if (isNaN(d.getTime())) return iso
+  const d = parseDate(iso)
+  if (!d) return iso
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
@@ -92,7 +98,11 @@ export default function ApprovalsSection() {
         .filter(r => filter === 'all' || r.type === filter)
         .sort((a, b) => {
           let cmp = 0
-          if (sortKey === 'approvedDate') cmp = (a.approvedDate || a.createdAt || '').localeCompare(b.approvedDate || b.createdAt || '')
+          if (sortKey === 'approvedDate') {
+            const ta = (parseDate(a.approvedDate || a.createdAt || '') ?? new Date(0)).getTime()
+            const tb = (parseDate(b.approvedDate || b.createdAt || '') ?? new Date(0)).getTime()
+            cmp = ta - tb
+          }
           else if (sortKey === 'type') cmp = a.type.localeCompare(b.type)
           else if (sortKey === 'requestNumber') cmp = a.requestNumber.localeCompare(b.requestNumber)
           else if (sortKey === 'projectName') cmp = (a.projectName ?? '').localeCompare(b.projectName ?? '')

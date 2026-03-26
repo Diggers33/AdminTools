@@ -182,11 +182,9 @@ export async function POST(req: NextRequest) {
   }
 
   rows.sort((a, b) => {
-    const da = a.approvedDate || a.createdAt
-    const db = b.approvedDate || b.createdAt
-    if (!da) return 1
-    if (!db) return -1
-    return db.localeCompare(da) // descending — newest first
+    const ta = (parseWdDate(a.approvedDate || a.createdAt || '') ?? new Date(0)).getTime()
+    const tb = (parseWdDate(b.approvedDate || b.createdAt || '') ?? new Date(0)).getTime()
+    return tb - ta // descending — newest first
   })
 
   return NextResponse.json({ rows, total: rows.length })
