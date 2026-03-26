@@ -114,6 +114,15 @@ export default function Home() {
     setWorkdeckConnected(false); setWorkdeckEmail(''); setWorkdeckData(null)
   }
 
+  // Parse a fetch Response as JSON; if the body isn't JSON (e.g. Vercel 413 plain-text),
+  // throw with the raw text so the user sees a meaningful message.
+  const safeJson = async (res: Response) => {
+    const text = await res.text()
+    try { return JSON.parse(text) } catch {
+      throw new Error(res.ok ? text : `Server error ${res.status}: ${text.slice(0, 120)}`)
+    }
+  }
+
   const handleLoadMonths = async () => {
     if (!reportsFile) return
     setError(null)
@@ -123,7 +132,7 @@ export default function Home() {
     fd.append('reports', reportsFile)
     try {
       const res = await fetch('/api/preview', { method: 'POST', body: fd })
-      const data = await res.json()
+      const data = await safeJson(res)
       if (!res.ok) throw new Error(data.error)
       setMonths(data.months)
       setStep('configure')
@@ -147,7 +156,7 @@ export default function Home() {
     fd.append('year', String(selectedMonth.year))
     try {
       const res = await fetch('/api/preview', { method: 'POST', body: fd })
-      const data = await res.json()
+      const data = await safeJson(res)
       if (!res.ok) throw new Error(data.error)
       setEmployees(data.employees)
       setSelectedEmployees(new Set(data.employees.map((e: Employee) => e.name)))
@@ -220,7 +229,7 @@ export default function Home() {
     try {
       const res = await fetch('/api/generate', { method: 'POST', body: fd })
       clearInterval(msgInterval)
-      if (!res.ok) { const d = await res.json(); throw new Error(d.error) }
+      if (!res.ok) { const d = await safeJson(res); throw new Error(d.error ?? d) }
       const blob = await res.blob()
       zipBlobRef.current = blob
       const url = URL.createObjectURL(blob)
@@ -249,7 +258,7 @@ export default function Home() {
       vfd.append('month', String(selectedMonth.month))
       vfd.append('year', String(selectedMonth.year))
       const vres = await fetch('/api/verify', { method: 'POST', body: vfd })
-      const vdata = await vres.json()
+      const vdata = await safeJson(vres)
       setVerifyReport(vdata)
     } catch { /* non-fatal */ }
     setVerifying(false)
