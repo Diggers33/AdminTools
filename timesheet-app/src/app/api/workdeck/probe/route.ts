@@ -11,7 +11,16 @@ export async function GET(req: NextRequest) {
 
   const auth = { Authorization: `Bearer ${token}` }
 
+  const start = '2026-02-01'
+  const end   = '2026-02-28'
+
   const candidates = [
+    `/queries/expenses/all?start=${start}&end=${end}`,
+    `/queries/purchases/all?start=${start}&end=${end}`,
+    `/queries/expenses/all?from=${start}&to=${end}`,
+    `/queries/purchases/all?from=${start}&to=${end}`,
+    `/queries/expenses/all?date=${start}`,
+    `/queries/purchases/all?date=${start}`,
     '/queries/expenses',
     '/queries/purchases',
     '/queries/admin/expenses',
