@@ -427,7 +427,7 @@ export default function Home() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: workdeckConnected ? 0 : 12 }}>
                 <div>
                   <span style={{ fontSize: 13, fontWeight: 600, color: '#1a2a3a' }}>Workdeck</span>
-                  <span style={{ fontSize: 11, color: '#5a7a9a', marginLeft: 8 }}>Optional · holiday days + project meetings</span>
+                  <span style={{ fontSize: 11, color: '#5a7a9a', marginLeft: 8 }}>Optional · holiday days</span>
                 </div>
                 {workdeckConnected && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
