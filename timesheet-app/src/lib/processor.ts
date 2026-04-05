@@ -8,6 +8,8 @@ export interface EmployeeMonth {
   travelDays: Record<string, Set<number>>
   // Holiday (annual leave) days: set of day numbers the employee is off
   holidayDays: Set<number>
+  // Company-wide public holidays from Workdeck working calendar (excluded from working days entirely)
+  publicHolidays: Set<number>
   // Sick leave / suspension / maternity days
   sickDays: Set<number>
   // Meeting hours from Workdeck: project (REPORTS name) → day → hours
@@ -25,8 +27,9 @@ const SPANISH_HOLIDAYS: Record<number, number[]> = {
   12: [6, 8, 25],
 }
 
-export function getWorkingDays(year: number, month: number): number[] {
+export function getWorkingDays(year: number, month: number, extraHolidays?: Set<number>): number[] {
   const holidays = new Set<number>(SPANISH_HOLIDAYS[month] || [])
+  if (extraHolidays) extraHolidays.forEach(d => holidays.add(d))
   const days: number[] = []
   const daysInMonth = new Date(year, month, 0).getDate()
   for (let d = 1; d <= daysInMonth; d++) {
@@ -399,7 +402,7 @@ export function extractEmployeeData(
   year: number,
   travelBuffer?: ArrayBuffer | null,
   leaveBuffer?: ArrayBuffer | null,
-  workdeckData?: { holidays: Record<string, number[]>; meetings: Record<string, Record<string, Record<number, number>>> } | null,
+  workdeckData?: { holidays: Record<string, number[]>; meetings: Record<string, Record<string, Record<number, number>>>; publicHolidays?: number[] } | null,
   sickLeaveBuffer?: ArrayBuffer | null
 ): EmployeeMonth[] {
   const employeeMap = new Map<string, Map<string, number>>()
@@ -436,11 +439,12 @@ export function extractEmployeeData(
   }
 
   const reportNames = Array.from(employeeMap.keys())
+  const publicHolidaySet = workdeckData?.publicHolidays?.length ? new Set(workdeckData.publicHolidays) : undefined
 
   // ── Parse travel data and match to report employees ──────────────────────
   const travelMap = new Map<string, Record<string, Set<number>>>()
   // key: matched report name → { project → Set<day> }
-  const workingDaySet = new Set(getWorkingDays(year, month))
+  const workingDaySet = new Set(getWorkingDays(year, month, publicHolidaySet))
 
   if (travelBuffer) {
     const daysInMonth = new Date(year, month, 0).getDate()
@@ -539,7 +543,7 @@ export function extractEmployeeData(
         for (const days of Object.values(travelDaysSets)) {
           for (const d of Array.from(days)) empAllTravelDays.add(d)
         }
-        const available = getWorkingDays(year, month).filter(d => !empAllTravelDays.has(d))
+        const available = getWorkingDays(year, month, publicHolidaySet).filter(d => !empAllTravelDays.has(d))
         // Seeded shuffle so output is deterministic
         const nameHash = name.split('').reduce((h, c) => h + c.charCodeAt(0), 0)
         const holidayRand = (seed: number): number => { const x = Math.sin(seed + 1) * 10000; return x - Math.floor(x) }
@@ -581,7 +585,7 @@ export function extractEmployeeData(
       }
     }
 
-    result.push({ name, projects, totalHours, travelDays: travelDaysSets, holidayDays, sickDays, meetingHours: meetingHoursMap })
+    result.push({ name, projects, totalHours, travelDays: travelDaysSets, holidayDays, publicHolidays: publicHolidaySet ?? new Set(), sickDays, meetingHours: meetingHoursMap })
   }
 
   return result.sort((a, b) => a.name.localeCompare(b.name))

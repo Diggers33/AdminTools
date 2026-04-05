@@ -62,7 +62,7 @@ export default function Home() {
   const [expandedVerify, setExpandedVerify] = useState<string | null>(null)
   const [workdeckConnected, setWorkdeckConnected] = useState(false)
   const [workdeckEmail, setWorkdeckEmail] = useState('')
-  const [workdeckData, setWorkdeckData] = useState<{ holidays: Record<string, number[]>; meetings: Record<string, Record<string, Record<number, number>>> } | null>(null)
+  const [workdeckData, setWorkdeckData] = useState<{ holidays: Record<string, number[]>; meetings: Record<string, Record<string, Record<number, number>>>; publicHolidays?: number[] } | null>(null)
   const [workdeckLoading, setWorkdeckLoading] = useState(false)
   const [activeTool, setActiveTool] = useState<'timesheets' | 'approvals' | null>(null)
   const zipBlobRef = useRef<Blob | null>(null)
@@ -468,6 +468,7 @@ export default function Home() {
               <span style={{ color: '#5a7a9a', fontSize: 13 }}>
                 {selectedMonth?.label} · {employees.length} employees
                 {travelFile && totalTravelDays > 0 ? ` · ✈ ${totalTravelDays} travel days` : ''}
+                {workdeckData?.publicHolidays?.length ? ` · 🏛 ${workdeckData.publicHolidays.length} public holiday${workdeckData.publicHolidays.length !== 1 ? 's' : ''}` : ''}
               </span>
               {workdeckLoading && (
               <>

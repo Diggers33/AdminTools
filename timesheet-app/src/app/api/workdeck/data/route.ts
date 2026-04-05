@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { processLeaveRequests, processUserEvents } from '@/lib/workdeck'
+import { processLeaveRequests, processUserEvents, extractCalendarHolidays } from '@/lib/workdeck'
 import { getWorkingDays, matchName } from '@/lib/processor'
 
 export const runtime = 'nodejs'
@@ -21,10 +21,19 @@ export async function POST(req: NextRequest) {
   const end   = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
   const workingDaySet = new Set(getWorkingDays(year, month))
 
-  // Fetch users + leave in parallel
-  const [usersRes, leaveRes] = await Promise.all([
+  // Fetch users, leave, and working calendars in parallel
+  const CALENDAR_PATHS = [
+    '/queries/working-calendars',
+    '/queries/calendars',
+    '/queries/bank-holidays',
+    '/queries/public-holidays',
+    '/queries/company-holidays',
+  ]
+
+  const [usersRes, leaveRes, ...calendarResults] = await Promise.all([
     fetch(`${API}/queries/users-summary`, { headers: auth }),
     fetch(`${API}/queries/leave-requests?start=${start}&end=${end}`, { headers: auth }),
+    ...CALENDAR_PATHS.map(p => fetch(`${API}${p}`, { headers: auth }).catch(() => null)),
   ])
   const usersText = await usersRes.text()
   const leaveText = await leaveRes.text()
@@ -86,5 +95,18 @@ export async function POST(req: NextRequest) {
     if (Object.keys(processed).length > 0) meetings[repName] = processed
   }
 
-  return NextResponse.json({ holidays, meetings })
+  // Extract public holidays from whichever calendar endpoint responded with data
+  let publicHolidays: number[] = []
+  for (const res of calendarResults) {
+    if (!res || !res.ok) continue
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw: any = await res.json().catch(() => null)
+      if (!raw) continue
+      const days = extractCalendarHolidays(raw, year, month)
+      if (days.length > 0) { publicHolidays = days; break }
+    } catch { continue }
+  }
+
+  return NextResponse.json({ holidays, meetings, publicHolidays })
 }

@@ -73,7 +73,8 @@ function buildMonthBlock(
   allTravelDays?: Set<number>,
   numProjectRows?: number,
   holidayDays?: Set<number>,
-  sickDays?: Set<number>
+  sickDays?: Set<number>,
+  publicHolidays?: Set<number>
 ): number {
   const PROJECT_ROWS_PER_BLOCK = numProjectRows ?? Math.max(12, projects.length)
   const daysInMonth = new Date(year, month, 0).getDate()
@@ -163,7 +164,7 @@ function buildMonthBlock(
 
   // Row 16: Other Activities — fills to 8h on working days (8 - project hours, min 0)
   const otherRow = startRow + 3 + PROJECT_ROWS_PER_BLOCK
-  const workingDaySet = new Set(getWorkingDays(year, month))
+  const workingDaySet = new Set(getWorkingDays(year, month, publicHolidays?.size ? publicHolidays : undefined))
   ws.getRow(otherRow).height = 15
   cell(ws, otherRow, 1, 'OTHER ACTIVITIES', OTHER_FILL, BOLD_FONT, LEFT)
   cell(ws, otherRow, 2, '', OTHER_FILL, NORMAL_FONT, CENTER)
@@ -264,7 +265,8 @@ export async function generateTimesheet(
   ws.getRow(5).height = 8
 
   // ── Distribute hours with travel awareness ────────────
-  const workingDays = getWorkingDays(year, month)
+  const publicHolidays = employee.publicHolidays?.size ? employee.publicHolidays : undefined
+  const workingDays = getWorkingDays(year, month, publicHolidays)
   const workingDaySet = new Set(workingDays)
   const PROJECT_ROWS_PER_BLOCK = Math.max(12, employee.projects.length)
   const capped = employee.projects.slice(0, PROJECT_ROWS_PER_BLOCK)
@@ -382,7 +384,7 @@ export async function generateTimesheet(
     dailyHours: projectDailyHours[i],
     travelDays: travelDays[p.project] instanceof Set ? travelDays[p.project] as Set<number> : new Set<number>(Array.from(travelDays[p.project] || []))
   }))
-  buildMonthBlock(ws, 6, month, year, projectsWithHours, allTravelDays, PROJECT_ROWS_PER_BLOCK, holidayDays, sickDays)
+  buildMonthBlock(ws, 6, month, year, projectsWithHours, allTravelDays, PROJECT_ROWS_PER_BLOCK, holidayDays, sickDays, publicHolidays)
 
   const buffer = await workbook.xlsx.writeBuffer()
   return Buffer.from(buffer as ArrayBuffer)

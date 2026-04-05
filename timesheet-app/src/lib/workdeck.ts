@@ -28,13 +28,59 @@ export function parseWdDate(s: string): Date {
   return new Date(Number(y), Number(m) - 1, Number(d))
 }
 
+// Extract day numbers for a given year/month from a raw Workdeck working-calendar response.
+// Workdeck may return calendars as an array of objects with various shapes; we probe common fields.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function extractCalendarHolidays(raw: any, year: number, month: number): number[] {
+  const days = new Set<number>()
+  const items: unknown[] = Array.isArray(raw) ? raw : (raw?.result ?? raw?.data ?? [])
+  if (!Array.isArray(items)) return []
+
+  function parseDay(dateStr: string): number | null {
+    if (!dateStr) return null
+    // DD/MM/YYYY
+    const ddmm = dateStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+    if (ddmm) {
+      if (Number(ddmm[3]) === year && Number(ddmm[2]) === month) return Number(ddmm[1])
+      return null
+    }
+    // YYYY-MM-DD or ISO
+    const iso = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (iso) {
+      if (Number(iso[1]) === year && Number(iso[2]) === month) return Number(iso[3])
+      return null
+    }
+    return null
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function scanItem(item: any) {
+    // Format: { date: "..." } or { startAt: "..." } — direct non-working day entry
+    for (const field of ['date', 'startAt', 'start', 'day']) {
+      if (item[field]) { const d = parseDay(String(item[field]).split(' ')[0]); if (d) days.add(d) }
+    }
+    // Format: { exceptions: [...] } or { holidays: [...] } or { nonWorkingDays: [...] }
+    for (const field of ['exceptions', 'holidays', 'nonWorkingDays', 'publicHolidays', 'bankHolidays', 'days']) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (Array.isArray(item[field])) item[field].forEach((e: any) => scanItem(e))
+    }
+  }
+
+  for (const item of items) scanItem(item)
+  return Array.from(days).sort((a, b) => a - b)
+}
+
 export function processLeaveRequests(
   requests: WorkdeckLeaveRequest[],
   year: number,
   month: number,
   workingDaySet: Set<number>
 ): Record<string, number[]> {
-  const LEAVE_KEYWORDS = ['annual leave', 'holiday', 'vacation', 'vacacion', 'conge', 'urlaub', 'pto']
+  const LEAVE_KEYWORDS = [
+    'annual leave', 'holiday', 'vacation', 'vacacion', 'conge', 'urlaub', 'pto',
+    'festivo', 'puente', 'dia libre', 'día libre', 'permiso retribuido', 'national',
+    'bank', 'public', 'oficial', 'official',
+  ]
 
   const monthStart = new Date(year, month - 1, 1)
   const monthEnd = new Date(year, month, 0)
