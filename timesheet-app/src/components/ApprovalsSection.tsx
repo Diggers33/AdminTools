@@ -66,6 +66,27 @@ export default function ApprovalsSection() {
     return `${names.join(', ')} ${year}`
   }
 
+  const handleDownloadExcel = async () => {
+    if (!displayed || displayed.length === 0) return
+    const XLSX = await import('xlsx')
+    const wsData = [
+      ['Type', 'Request No.', 'Project', 'Description', 'Submitted By', 'Approved By', 'Approved Date'],
+      ...displayed.map(row => [
+        row.type,
+        row.requestNumber,
+        row.projectName || '',
+        row.description || '',
+        row.submittedBy || '',
+        row.approvedBy || '',
+        formatDate(row.approvedDate),
+      ]),
+    ]
+    const ws = XLSX.utils.aoa_to_sheet(wsData)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Approvals')
+    XLSX.writeFile(wb, `Approvals ${periodLabel()}.xlsx`)
+  }
+
   const handleFetch = async () => {
     setLoading(true)
     setError(null)
@@ -217,6 +238,19 @@ export default function ApprovalsSection() {
           <div style={{ padding: '14px 20px', borderBottom: '1px solid #c8d8ed', display: 'flex', alignItems: 'center', gap: 12 }}>
             <span style={{ fontSize: 13, color: '#1a4a8a' }}>{periodLabel()}</span>
             <span style={{ fontSize: 12, color: '#5a7a9a' }}>{displayed.length} approval{displayed.length !== 1 ? 's' : ''}</span>
+            {displayed.length > 0 && (
+              <button onClick={handleDownloadExcel} style={{
+                marginLeft: 'auto', padding: '6px 14px', borderRadius: 6,
+                border: '1px solid #c8d8ed', background: '#f8fafd',
+                color: '#1a4a8a', fontSize: 12, fontFamily: 'Georgia, serif',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                  <path d="M6.5 1v7M3.5 5.5l3 3 3-3M1.5 10h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Download Excel
+              </button>
+            )}
           </div>
 
           {displayed.length === 0 ? (

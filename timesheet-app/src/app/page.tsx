@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import JSZip from 'jszip'
 import ApprovalsSection from '@/components/ApprovalsSection'
 import LandingPage from '@/components/LandingPage'
+import LoginPage from '@/components/LoginPage'
 
 interface Project { project: string; hours: number }
 interface Employee { name: string; projects: Project[]; totalHours: number; travelDayCount?: number; holidayDayCount?: number; sickDayCount?: number; meetingCount?: number; maxAvailableHours?: number; hoursAnomaly?: boolean }
@@ -64,10 +65,6 @@ export default function Home() {
   const [workdeckData, setWorkdeckData] = useState<{ holidays: Record<string, number[]>; meetings: Record<string, Record<string, Record<number, number>>> } | null>(null)
   const [workdeckLoading, setWorkdeckLoading] = useState(false)
   const [activeTool, setActiveTool] = useState<'timesheets' | 'approvals' | null>(null)
-  const [loginEmail, setLoginEmail] = useState('')
-  const [loginPassword, setLoginPassword] = useState('')
-  const [loginLoading, setLoginLoading] = useState(false)
-  const [loginError, setLoginError] = useState<string | null>(null)
   const zipBlobRef = useRef<Blob | null>(null)
   const reportsInputRef = useRef<HTMLInputElement>(null)
   const travelInputRef  = useRef<HTMLInputElement>(null)
@@ -97,21 +94,6 @@ export default function Home() {
     const f = e.dataTransfer.files[0]
     if (f?.name.endsWith('.xlsx')) { setSickFile(f); setError(null) }
   }, [])
-
-  const handleWorkdeckLogin = async () => {
-    if (!loginEmail || !loginPassword) return
-    setLoginLoading(true); setLoginError(null)
-    try {
-      const res = await fetch('/api/workdeck/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mail: loginEmail, password: loginPassword }),
-      })
-      if (!res.ok) throw new Error('Invalid credentials')
-      setWorkdeckConnected(true); setWorkdeckEmail(loginEmail); setLoginPassword('')
-    } catch { setLoginError('Invalid credentials — check your email and password') }
-    finally { setLoginLoading(false) }
-  }
 
   const handleWorkdeckLogout = async () => {
     await fetch('/api/workdeck/logout', { method: 'POST' })
@@ -356,6 +338,8 @@ export default function Home() {
   const totalTravelDays = employees.filter(e => selectedEmployees.has(e.name)).reduce((s, e) => s + (e.travelDayCount || 0), 0)
   const STEPS = ['upload', 'configure', 'preview', 'done'] as const
 
+  if (!workdeckConnected) return <LoginPage onLogin={(email) => { setWorkdeckConnected(true); setWorkdeckEmail(email) }} />
+
   if (activeTool === null) return <LandingPage onSelect={(id) => setActiveTool(id as 'timesheets' | 'approvals')} />
 
   const toolLabel = activeTool === 'timesheets' ? 'Timesheet Verification Tool' : 'Approval Checker'
@@ -409,6 +393,12 @@ export default function Home() {
               ))}
             </div>
           )}
+
+          {/* Account */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 16, borderLeft: '1px solid #1a3a6a' }}>
+            <span style={{ fontSize: 11, color: '#4a7ab8' }}>{workdeckEmail}</span>
+            <button onClick={handleWorkdeckLogout} style={{ fontSize: 11, color: '#3a6a9a', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>Logout</button>
+          </div>
         </div>
       </header>
 
@@ -450,35 +440,6 @@ export default function Home() {
                 onDrop={handleSickDrop} onBrowse={() => sickInputRef.current?.click()}
                 inputRef={sickInputRef} onChange={e => { const f = e.target.files?.[0]; if (f) { setSickFile(f); setError(null) } }} required={false} icon={'\u271A'} iconColor="#c0392b" />
               <div />
-            </div>
-            {/* Workdeck connection */}
-            <div style={{ marginTop: 16, border: '1px solid #c8d8ed', borderRadius: 10, padding: '16px 20px', background: '#f8fbff' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: workdeckConnected ? 0 : 12 }}>
-                <div>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1a2a3a' }}>Workdeck</span>
-                  <span style={{ fontSize: 11, color: '#5a7a9a', marginLeft: 8 }}>Optional · holiday days</span>
-                </div>
-                {workdeckConnected && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ color: '#1da35a', fontSize: 13, fontWeight: 600 }}>✓ Connected as {workdeckEmail}</span>
-                    <button onClick={handleWorkdeckLogout} style={{ fontSize: 12, color: '#5a7a9a', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Disconnect</button>
-                  </div>
-                )}
-              </div>
-              {!workdeckConnected && (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input type="email" placeholder="Email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)}
-                    style={{ flex: 1, padding: '8px 10px', border: '1px solid #c8d8ed', borderRadius: 6, fontSize: 13, outline: 'none', background: '#fff', color: '#1a2a3a' }} />
-                  <input type="password" placeholder="Password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleWorkdeckLogin()}
-                    style={{ flex: 1, padding: '8px 10px', border: '1px solid #c8d8ed', borderRadius: 6, fontSize: 13, outline: 'none', background: '#fff', color: '#1a2a3a' }} />
-                  <button onClick={handleWorkdeckLogin} disabled={loginLoading || !loginEmail || !loginPassword}
-                    style={{ padding: '8px 18px', background: loginLoading || !loginEmail || !loginPassword ? '#a0c8a0' : '#1da35a', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, cursor: loginLoading || !loginEmail || !loginPassword ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>
-                    {loginLoading ? 'Connecting…' : 'Connect'}
-                  </button>
-                </div>
-              )}
-              {loginError && <p style={{ color: '#cc0000', fontSize: 12, margin: '8px 0 0' }}>{loginError}</p>}
             </div>
             <div style={{ marginTop: 28 }}>
             <button onClick={handleLoadMonths} disabled={!reportsFile} style={btn(!reportsFile)}>Continue →</button>
