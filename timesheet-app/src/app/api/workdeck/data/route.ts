@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { processLeaveRequests, processUserEvents, extractCalendarHolidays } from '@/lib/workdeck'
+import { processLeaveRequests, processUserEvents, extractNonWorkingDays } from '@/lib/workdeck'
 import { getWorkingDays, matchName } from '@/lib/processor'
 
 export const runtime = 'nodejs'
@@ -21,32 +21,37 @@ export async function POST(req: NextRequest) {
   const end   = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
   const workingDaySet = new Set(getWorkingDays(year, month))
 
-  // Fetch users, leave, and working calendars in parallel
-  const CALENDAR_PATHS = [
-    '/queries/working-calendars',
-    '/queries/calendars',
-    '/queries/bank-holidays',
-    '/queries/public-holidays',
-    '/queries/company-holidays',
-  ]
-
-  const [usersRes, leaveRes, ...calendarResults] = await Promise.all([
+  // Fetch users, leave requests, and non-working days in parallel
+  const [usersRes, leaveRes, nonWorkingRes] = await Promise.all([
     fetch(`${API}/queries/users-summary`, { headers: auth }),
     fetch(`${API}/queries/leave-requests?start=${start}&end=${end}`, { headers: auth }),
-    ...CALENDAR_PATHS.map(p => fetch(`${API}${p}`, { headers: auth }).catch(() => null)),
+    fetch(`${API}/queries/non-working-days?start=${start}&end=${end}`, { headers: auth }).catch(() => null),
   ])
+
   const usersText = await usersRes.text()
   const leaveText = await leaveRes.text()
   if (!usersRes.ok) return NextResponse.json({ error: 'Failed to fetch users: ' + usersText.slice(0, 100) }, { status: 502 })
   if (!leaveRes.ok) return NextResponse.json({ error: 'Failed to fetch leave: ' + leaveText.slice(0, 100) }, { status: 502 })
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let usersRaw: any, leaveRaw: any
   try { usersRaw = JSON.parse(usersText) } catch { usersRaw = {} }
   try { leaveRaw = JSON.parse(leaveText) } catch { leaveRaw = {} }
+
   // Workdeck wraps responses in { result: [...] }
   const users: { id: string; firstName: string; lastName: string }[] =
     Array.isArray(usersRaw) ? usersRaw : (usersRaw?.result ?? usersRaw?.data ?? [])
   const leaveRequests = Array.isArray(leaveRaw) ? leaveRaw : (leaveRaw?.result ?? leaveRaw?.data ?? [])
+
+  // Parse non-working days (public holidays) for the month
+  let publicHolidays: number[] = []
+  if (nonWorkingRes?.ok) {
+    try {
+      const raw = await nonWorkingRes.json()
+      const items = Array.isArray(raw) ? raw : (raw?.result ?? raw?.data ?? [])
+      publicHolidays = extractNonWorkingDays(items, year, month)
+    } catch { /* leave empty */ }
+  }
 
   // Build UUID → full name map
   const uuidToName = new Map<string, string>()
@@ -62,17 +67,17 @@ export async function POST(req: NextRequest) {
     if (uuid) repNameToUUID.set(repName, uuid)
   }
 
-  // Process leave (all employees, filter to month already done in processLeaveRequests)
+  // Process leave requests → per-employee holiday days
   const holidaysByWdName = processLeaveRequests(leaveRequests, year, month, workingDaySet)
 
-  // Map wdName holidays → REPORTS name holidays
+  // Map Workdeck name → REPORTS name
   const holidays: Record<string, number[]> = {}
   for (const [repName, uuid] of Array.from(repNameToUUID.entries())) {
     const wdName = uuidToName.get(uuid)!
     if (holidaysByWdName[wdName]?.length) holidays[repName] = Array.from(new Set(holidaysByWdName[wdName]))
   }
 
-  // Fetch events for matched UUIDs in batches of 10
+  // Fetch calendar events for matched UUIDs in batches of 10
   const matchedUUIDs = Array.from(new Set(Array.from(repNameToUUID.values())))
   const eventsByUUID = new Map<string, unknown[]>()
   for (let i = 0; i < matchedUUIDs.length; i += 10) {
@@ -87,25 +92,12 @@ export async function POST(req: NextRequest) {
     for (const { uuid, events } of results) eventsByUUID.set(uuid, events)
   }
 
-  // Process events per employee
+  // Process events per employee (meeting/task hours)
   const meetings: Record<string, Record<string, Record<number, number>>> = {}
   for (const [repName, uuid] of Array.from(repNameToUUID.entries())) {
     const events = eventsByUUID.get(uuid) ?? []
     const processed = processUserEvents(events as Parameters<typeof processUserEvents>[0], year, month, workingDaySet)
     if (Object.keys(processed).length > 0) meetings[repName] = processed
-  }
-
-  // Extract public holidays from whichever calendar endpoint responded with data
-  let publicHolidays: number[] = []
-  for (const res of calendarResults) {
-    if (!res || !res.ok) continue
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const raw: any = await res.json().catch(() => null)
-      if (!raw) continue
-      const days = extractCalendarHolidays(raw, year, month)
-      if (days.length > 0) { publicHolidays = days; break }
-    } catch { continue }
   }
 
   return NextResponse.json({ holidays, meetings, publicHolidays })
