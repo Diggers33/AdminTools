@@ -57,6 +57,7 @@ export default function Home() {
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
   const [zipName, setZipName] = useState('')
   const [verifyReport, setVerifyReport] = useState<VerifyReport | null>(null)
+  const [verifyError, setVerifyError] = useState<string | null>(null)
   const [verifying, setVerifying] = useState(false)
   const [fixing, setFixing] = useState(false)
   const [expandedVerify, setExpandedVerify] = useState<string | null>(null)
@@ -267,19 +268,28 @@ export default function Home() {
   }
 
   const runVerify = async (blob: Blob, name: string) => {
-    if (!reportsFile || !selectedMonth) return
+    if (!selectedMonth) return
     setVerifying(true)
     setVerifyReport(null)
+    setVerifyError(null)
     try {
       const vfd = new FormData()
-      vfd.append('reports', reportsFile)
+      if (parsedReportsRows) {
+        const monthRows = parsedReportsRows.filter(r => r.year === selectedMonth.year && r.month === selectedMonth.month)
+        vfd.append('parsedReports', JSON.stringify(monthRows))
+      } else if (reportsFile) {
+        vfd.append('reports', reportsFile)
+      }
       vfd.append('zip', new File([blob], name, { type: 'application/zip' }))
       vfd.append('month', String(selectedMonth.month))
       vfd.append('year', String(selectedMonth.year))
       const vres = await fetch('/api/verify', { method: 'POST', body: vfd })
       const vdata = await safeJson(vres)
+      if (!vres.ok) throw new Error(vdata.error ?? 'Verification failed')
       setVerifyReport(vdata)
-    } catch { /* non-fatal */ }
+    } catch (e) {
+      setVerifyError(e instanceof Error ? e.message : 'Verification failed')
+    }
     setVerifying(false)
   }
 
@@ -329,7 +339,7 @@ export default function Home() {
   const handleReset = () => {
     setStep('upload'); setReportsFile(null); setParsedReportsRows(null); setTravelFile(null); setLeaveFile(null); setMonths([])
     setSelectedMonth(null); setEmployees([]); setSelectedEmployees(new Set())
-    setError(null); setVerifyReport(null); setVerifying(false); setFixing(false); setExpandedVerify(null)
+    setError(null); setVerifyReport(null); setVerifyError(null); setVerifying(false); setFixing(false); setExpandedVerify(null)
     setWorkdeckData(null)
     if (downloadUrl) URL.revokeObjectURL(downloadUrl)
     setDownloadUrl(null)
@@ -600,6 +610,12 @@ export default function Home() {
                     animation: 'spin 0.8s linear infinite' }} />
                   <p style={{ fontSize: 12, color: '#5a7a9a', marginTop: 10 }}>Reading generated files and comparing totals…</p>
                   <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+                </div>
+              )}
+
+              {verifyError && !verifying && (
+                <div style={{ padding: '14px 20px', fontSize: 12, color: '#c0392b', background: '#fff5f2' }}>
+                  Verification error: {verifyError}
                 </div>
               )}
 

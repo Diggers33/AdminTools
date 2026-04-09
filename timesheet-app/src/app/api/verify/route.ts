@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { extractEmployeeData } from '@/lib/processor'
+import { extractEmployeeData, ParsedReportsRow } from '@/lib/processor'
 import ExcelJS from 'exceljs'
 import JSZip from 'jszip'
 
@@ -35,19 +35,24 @@ async function readTimesheetTotals(buffer: any): Promise<Map<string, number>> {
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
-    const reportsFile = formData.get('reports') as File | null
-    const zipFile     = formData.get('zip') as File | null
-    const monthStr    = formData.get('month') as string | null
-    const yearStr     = formData.get('year') as string | null
-    if (!reportsFile || !zipFile || !monthStr || !yearStr)
-      return NextResponse.json({ error: 'reports, zip, month and year required' }, { status: 400 })
+    const reportsFile    = formData.get('reports') as File | null
+    const parsedRowsStr  = formData.get('parsedReports') as string | null
+    const zipFile        = formData.get('zip') as File | null
+    const monthStr       = formData.get('month') as string | null
+    const yearStr        = formData.get('year') as string | null
+    if (!reportsFile && !parsedRowsStr)
+      return NextResponse.json({ error: 'reports or parsedReports required' }, { status: 400 })
+    if (!zipFile || !monthStr || !yearStr)
+      return NextResponse.json({ error: 'zip, month and year required' }, { status: 400 })
 
     const month = parseInt(monthStr)
     const year  = parseInt(yearStr)
     const monthLabel = new Date(year, month - 1, 1).toLocaleString('en-GB', { month: 'long' })
 
-    const reportsBuffer = await reportsFile.arrayBuffer()
-    const employees = extractEmployeeData(reportsBuffer, month, year)
+    const reportsInput: ArrayBuffer | ParsedReportsRow[] = parsedRowsStr
+      ? (JSON.parse(parsedRowsStr) as ParsedReportsRow[])
+      : await reportsFile!.arrayBuffer()
+    const employees = extractEmployeeData(reportsInput, month, year)
     const expectedMap = new Map<string, { totalHours: number; projects: Map<string, number> }>()
     for (const emp of employees) {
       const pm = new Map<string, number>()
