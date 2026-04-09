@@ -14,6 +14,10 @@ export interface EmployeeMonth {
   sickDays: Set<number>
   // Meeting hours from Workdeck: project (REPORTS name) → day → hours
   meetingHours: Record<string, Record<number, number>>
+  // First day of the month the employee is active (undefined = from day 1)
+  startDay?: number
+  // Max hours assignable per working day (default 8; less for reduced schedules)
+  dailyCap: number
 }
 
 // Spanish public holidays (month 1-indexed, day)
@@ -356,6 +360,102 @@ export function parseSickLeaveFile(
   return result
 }
 
+// ── Parse start dates (TABLA ALTA CONTRATO) and reduced hours (JORNADAS REDUCIDAS / HORAS CONVENIO) ──
+function parseContractAndJornada(
+  buffer: ArrayBuffer,
+  month: number,
+  year: number
+): { startDays: Map<string, number>; dailyCaps: Map<string, number> } {
+  const wb = XLSX.read(buffer, { type: 'array', cellDates: true })
+  const ws = wb.Sheets['TABLAS']
+  if (!ws) return { startDays: new Map(), dailyCaps: new Map() }
+
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+  const monthStart = new Date(Date.UTC(year, month - 1, 1))
+  const monthEnd   = new Date(Date.UTC(year, month, 0))
+
+  const toDate = (v: unknown): Date | null => {
+    if (v instanceof Date) return new Date(Math.round((v as Date).getTime() / 86400000) * 86400000)
+    if (typeof v === 'number') return excelSerialToDate(v)
+    return null
+  }
+
+  // Normalise JORNADA value to a fraction 0–1 (exclusive of 1 = full-time)
+  const parseJornadaFrac = (v: unknown): number | null => {
+    let n: number
+    if (typeof v === 'number') {
+      n = v <= 1.5 ? v : v / 100  // ≤1.5 already a fraction; otherwise a percentage
+    } else if (typeof v === 'string') {
+      const cleaned = v.replace(',', '.').replace('%', '').trim()
+      n = parseFloat(cleaned)
+      if (isNaN(n) || n <= 0) return null
+      n = v.includes('%') || n > 1.5 ? n / 100 : n
+    } else return null
+    if (n <= 0 || n >= 1) return null  // skip 0% (invalid) and 100% (full-time)
+    return n
+  }
+
+  const startDays = new Map<string, number>()
+  const dailyCaps = new Map<string, number>()
+
+  // ── TABLA ALTA CONTRATO (cols A-C, rows 2 until "TABLA BAJA CONTRATO") ────
+  for (let i = 2; i < rows.length; i++) {
+    const row = rows[i] as unknown[]
+    const empRaw = row[0]
+    if (!empRaw) continue
+    const cell = String(empRaw).trim()
+    if (cell.startsWith('TABLA')) break
+    if (cell === 'EMPLEADO/A') continue
+    const d = toDate(row[1])
+    // Only record if the employee started mid-month (after day 1) in the selected month
+    if (d && d.getUTCFullYear() === year && d.getUTCMonth() + 1 === month && d.getUTCDate() > 1) {
+      startDays.set(cell, d.getUTCDate())
+    }
+  }
+
+  // ── TABLA JORNADAS REDUCIDAS (cols J-N = indices 9-13) ────────────────────
+  for (let r = 2; r < rows.length; r++) {
+    const row = rows[r] as unknown[]
+    const empRaw = row[9]
+    if (!empRaw) continue
+    const cell = String(empRaw).trim()
+    if (cell === 'EMPLEADO' || cell.startsWith('TABLA')) continue
+
+    const frac = parseJornadaFrac(row[10])
+    if (frac === null) continue
+
+    const startDate = toDate(row[11])
+    const endDate   = toDate(row[12])  // null = ongoing
+
+    if (!startDate || startDate > monthEnd) continue
+    if (endDate && endDate < monthStart) continue
+
+    const cap = Math.round(frac * 8 * 10) / 10
+    const existing = dailyCaps.get(cell)
+    if (existing === undefined || cap < existing) dailyCaps.set(cell, cap)
+  }
+
+  // ── TABLA HORAS CONVENIO (cols E-G detected by header in col E) ───────────
+  for (let r = 0; r < rows.length; r++) {
+    if (String(rows[r][4] ?? '').trim() !== 'TABLA HORAS CONVENIO') continue
+    for (let dr = r + 2; dr < rows.length; dr++) {
+      const dataRow = rows[dr] as unknown[]
+      const empRaw = dataRow[4]
+      if (!empRaw) break
+      const cell = String(empRaw).trim()
+      if (cell === 'EMPLEADO/A' || cell.startsWith('TABLA')) break
+      const weeklyHours = typeof dataRow[6] === 'number' ? dataRow[6] : parseFloat(String(dataRow[6] ?? ''))
+      if (isNaN(weeklyHours) || weeklyHours <= 0 || weeklyHours >= 40) continue
+      const cap = Math.round((weeklyHours / 5) * 10) / 10
+      const existing = dailyCaps.get(cell)
+      if (existing === undefined || cap < existing) dailyCaps.set(cell, cap)
+    }
+    break
+  }
+
+  return { startDays, dailyCaps }
+}
+
 // ── Main extract function ──────────────────────────────────────────────────
 export function parseReportsFile(buffer: ArrayBuffer): {
   employees: string[]
@@ -483,11 +583,15 @@ export function extractEmployeeData(
     }
   }
 
-  // ── Parse sick leave data ─────────────────────────────────────────────────
-  // raw sick leave: file employee name → Set<day>
+  // ── Parse sick leave, start dates, and reduced hours from the same file ────
   const rawSickMap: Record<string, Set<number>> = sickLeaveBuffer
     ? parseSickLeaveFile(sickLeaveBuffer, month, year, workingDaySet)
     : {}
+  const { startDays, dailyCaps } = sickLeaveBuffer
+    ? parseContractAndJornada(sickLeaveBuffer, month, year)
+    : { startDays: new Map<string, number>(), dailyCaps: new Map<string, number>() }
+  const startDayNames = Array.from(startDays.keys())
+  const dailyCapNames = Array.from(dailyCaps.keys())
 
   // ── Build result ──────────────────────────────────────────────────────────
   const result: EmployeeMonth[] = []
@@ -585,7 +689,14 @@ export function extractEmployeeData(
       }
     }
 
-    result.push({ name, projects, totalHours, travelDays: travelDaysSets, holidayDays, publicHolidays: publicHolidaySet ?? new Set(), sickDays, meetingHours: meetingHoursMap })
+    // ── Match start date and daily cap ────────────────────────────────────────
+    const matchedStartName = startDayNames.length > 0 ? matchName(name, startDayNames) : null
+    const startDay = matchedStartName ? startDays.get(matchedStartName) : undefined
+
+    const matchedCapName = dailyCapNames.length > 0 ? matchName(name, dailyCapNames) : null
+    const dailyCap = matchedCapName ? (dailyCaps.get(matchedCapName) ?? 8) : 8
+
+    result.push({ name, projects, totalHours, travelDays: travelDaysSets, holidayDays, publicHolidays: publicHolidaySet ?? new Set(), sickDays, meetingHours: meetingHoursMap, startDay, dailyCap })
   }
 
   return result.sort((a, b) => a.name.localeCompare(b.name))

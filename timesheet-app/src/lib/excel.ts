@@ -74,7 +74,9 @@ function buildMonthBlock(
   numProjectRows?: number,
   holidayDays?: Set<number>,
   sickDays?: Set<number>,
-  publicHolidays?: Set<number>
+  publicHolidays?: Set<number>,
+  startDay?: number,
+  dailyCap?: number
 ): number {
   const PROJECT_ROWS_PER_BLOCK = numProjectRows ?? Math.max(12, projects.length)
   const daysInMonth = new Date(year, month, 0).getDate()
@@ -164,7 +166,11 @@ function buildMonthBlock(
 
   // Row 16: Other Activities — fills to 8h on working days (8 - project hours, min 0)
   const otherRow = startRow + 3 + PROJECT_ROWS_PER_BLOCK
-  const workingDaySet = new Set(getWorkingDays(year, month, publicHolidays?.size ? publicHolidays : undefined))
+  const cap = dailyCap ?? 8
+  const workingDaySet = new Set(
+    getWorkingDays(year, month, publicHolidays?.size ? publicHolidays : undefined)
+      .filter(d => !startDay || d >= startDay)
+  )
   ws.getRow(otherRow).height = 15
   cell(ws, otherRow, 1, 'OTHER ACTIVITIES', OTHER_FILL, BOLD_FONT, LEFT)
   cell(ws, otherRow, 2, '', OTHER_FILL, NORMAL_FONT, CENTER)
@@ -176,7 +182,7 @@ function buildMonthBlock(
     if (d <= daysInMonth && !weekends.has(d)) {
       if (workingDaySet.has(d) && !isHoliday && !isSick) {
         const projSum = projects.reduce((s, p) => s + (p.dailyHours[d] ?? 0), 0)
-        val = Math.max(0, 8 - projSum)
+        val = Math.max(0, cap - projSum)
         otherTotal += val
       } else {
         val = 0 // public holiday, sick leave, or annual leave
@@ -205,7 +211,7 @@ function buildMonthBlock(
     const isSick = sickDays?.has(d) ?? false
     if (d <= daysInMonth) {
       const projSum = (isHoliday || isSick) ? 0 : projects.reduce((s, p) => s + (p.dailyHours[d] ?? 0), 0)
-      const otherVal = (!weekends.has(d) && workingDaySet.has(d) && !isHoliday && !isSick) ? Math.max(0, 8 - projSum) : 0
+      const otherVal = (!weekends.has(d) && workingDaySet.has(d) && !isHoliday && !isSick) ? Math.max(0, cap - projSum) : 0
       const daySum = projSum + otherVal
       tc.value = daySum
       grandTotal += daySum
@@ -266,7 +272,11 @@ export async function generateTimesheet(
 
   // ── Distribute hours with travel awareness ────────────
   const publicHolidays = employee.publicHolidays?.size ? employee.publicHolidays : undefined
+  const dailyCap = employee.dailyCap ?? 8
+  const startDay = employee.startDay
+  // Exclude public holidays and days before the employee's start date
   const workingDays = getWorkingDays(year, month, publicHolidays)
+    .filter(d => !startDay || d >= startDay)
   const workingDaySet = new Set(workingDays)
   const PROJECT_ROWS_PER_BLOCK = Math.max(12, employee.projects.length)
   const capped = employee.projects.slice(0, PROJECT_ROWS_PER_BLOCK)
@@ -286,7 +296,7 @@ export async function generateTimesheet(
     const myTravelDays = travelDays[p.project]
     if (myTravelDays) {
       for (const d of Array.from(myTravelDays)) {
-        if (workingDaySet.has(d)) pinned[d] = 8
+        if (workingDaySet.has(d)) pinned[d] = dailyCap
       }
     }
     // Explicitly zero out any travel days belonging to OTHER projects (employee is away)
@@ -301,9 +311,9 @@ export async function generateTimesheet(
   // so we never exceed 8h/day and never lose hours.
   // Holiday days are blocked from project distribution (like travel days)
   const freeDays = workingDays.filter(d => !allTravelDays.has(d) && !holidayDays.has(d) && !sickDays.has(d))
-  // Track daily capacity remaining across all projects (8h per day max)
+  // Track daily capacity remaining across all projects
   const dayRemaining: Record<number, number> = {}
-  for (const d of freeDays) dayRemaining[d] = 8
+  for (const d of freeDays) dayRemaining[d] = dailyCap
 
   const meetingHours = employee.meetingHours || {}
 
@@ -316,7 +326,7 @@ export async function generateTimesheet(
       const day = Number(dayStr)
       if (!freeDaySet.has(day)) continue
       projectDailyHours[i][day] = Math.round(((projectDailyHours[i][day] ?? 0) + hrs) * 10) / 10
-      dayRemaining[day] = Math.round((Math.max(0, (dayRemaining[day] ?? 8) - hrs)) * 10) / 10
+      dayRemaining[day] = Math.round((Math.max(0, (dayRemaining[day] ?? dailyCap) - hrs)) * 10) / 10
     }
   }
 
@@ -326,7 +336,7 @@ export async function generateTimesheet(
 
     // Pre-allocated travel hours for this project
     const travelHours = Object.entries(pinned)
-      .filter(([, h]) => h === 8)
+      .filter(([, h]) => h >= dailyCap)
       .reduce((s, [, h]) => s + h, 0)
     const pinnedMeetingHrs = Object.entries(meetingHours[capped[i].project] || {})
       .filter(([d]) => freeDaySet.has(Number(d)))
@@ -384,7 +394,7 @@ export async function generateTimesheet(
     dailyHours: projectDailyHours[i],
     travelDays: travelDays[p.project] instanceof Set ? travelDays[p.project] as Set<number> : new Set<number>(Array.from(travelDays[p.project] || []))
   }))
-  buildMonthBlock(ws, 6, month, year, projectsWithHours, allTravelDays, PROJECT_ROWS_PER_BLOCK, holidayDays, sickDays, publicHolidays)
+  buildMonthBlock(ws, 6, month, year, projectsWithHours, allTravelDays, PROJECT_ROWS_PER_BLOCK, holidayDays, sickDays, publicHolidays, startDay, dailyCap)
 
   const buffer = await workbook.xlsx.writeBuffer()
   return Buffer.from(buffer as ArrayBuffer)
