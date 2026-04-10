@@ -16,6 +16,8 @@ export interface EmployeeMonth {
   meetingHours: Record<string, Record<number, number>>
   // First day of the month the employee is active (undefined = from day 1)
   startDay?: number
+  // Last day of the month the employee is active (undefined = through last day)
+  endDay?: number
   // Max hours assignable per working day (default 8; less for reduced schedules)
   dailyCap: number
 }
@@ -365,10 +367,10 @@ function parseContractAndJornada(
   buffer: ArrayBuffer,
   month: number,
   year: number
-): { startDays: Map<string, number>; dailyCaps: Map<string, number> } {
+): { startDays: Map<string, number>; endDays: Map<string, number>; dailyCaps: Map<string, number> } {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: true })
   const ws = wb.Sheets['TABLAS']
-  if (!ws) return { startDays: new Map(), dailyCaps: new Map() }
+  if (!ws) return { startDays: new Map(), endDays: new Map(), dailyCaps: new Map() }
 
   const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
   const monthStart = new Date(Date.UTC(year, month - 1, 1))
@@ -396,6 +398,7 @@ function parseContractAndJornada(
   }
 
   const startDays = new Map<string, number>()
+  const endDays   = new Map<string, number>()
   const dailyCaps = new Map<string, number>()
 
   // ── TABLA ALTA CONTRATO (cols A-C, rows 2 until "TABLA BAJA CONTRATO") ────
@@ -435,6 +438,26 @@ function parseContractAndJornada(
     if (existing === undefined || cap < existing) dailyCaps.set(cell, cap)
   }
 
+  // ── TABLA BAJA CONTRATO (cols A-B, follows TABLA ALTA CONTRATO in col 0) ────
+  {
+    let inBaja = false
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i] as unknown[]
+      const empRaw = row[0]
+      if (!empRaw) continue
+      const cellStr = String(empRaw).trim()
+      if (cellStr === 'TABLA BAJA CONTRATO') { inBaja = true; continue }
+      if (!inBaja) continue
+      if (cellStr === 'EMPLEADO/A') continue
+      if (cellStr.startsWith('TABLA')) break  // next table section
+      const d = toDate(row[1])
+      // Record any end date that falls within the selected month
+      if (d && d.getUTCFullYear() === year && d.getUTCMonth() + 1 === month) {
+        endDays.set(cellStr, d.getUTCDate())
+      }
+    }
+  }
+
   // ── TABLA HORAS CONVENIO (cols E-G detected by header in col E) ───────────
   for (let r = 0; r < rows.length; r++) {
     if (String(rows[r][4] ?? '').trim() !== 'TABLA HORAS CONVENIO') continue
@@ -453,7 +476,7 @@ function parseContractAndJornada(
     break
   }
 
-  return { startDays, dailyCaps }
+  return { startDays, endDays, dailyCaps }
 }
 
 // ── Main extract function ──────────────────────────────────────────────────
@@ -587,10 +610,11 @@ export function extractEmployeeData(
   const rawSickMap: Record<string, Set<number>> = sickLeaveBuffer
     ? parseSickLeaveFile(sickLeaveBuffer, month, year, workingDaySet)
     : {}
-  const { startDays, dailyCaps } = sickLeaveBuffer
+  const { startDays, endDays, dailyCaps } = sickLeaveBuffer
     ? parseContractAndJornada(sickLeaveBuffer, month, year)
-    : { startDays: new Map<string, number>(), dailyCaps: new Map<string, number>() }
+    : { startDays: new Map<string, number>(), endDays: new Map<string, number>(), dailyCaps: new Map<string, number>() }
   const startDayNames = Array.from(startDays.keys())
+  const endDayNames   = Array.from(endDays.keys())
   const dailyCapNames = Array.from(dailyCaps.keys())
 
   // ── Build result ──────────────────────────────────────────────────────────
@@ -607,7 +631,7 @@ export function extractEmployeeData(
     const reportProjectNames = projects.map(p => p.project)
 
     // Normalise: uppercase, remove hyphens, spaces, trailing version numbers
-    const normProj = (s: string): string => s.toUpperCase().replace(/[-s]/g, '').replace(/d+$/, '').trim()
+    const normProj = (s: string): string => s.toUpperCase().replace(/[-\s]/g, '').replace(/\d+$/, '').trim()
 
     const travelDaysSets: Record<string, Set<number>> = {}
     for (const [travelProj, days] of Object.entries(rawTravelDays)) {
@@ -689,14 +713,17 @@ export function extractEmployeeData(
       }
     }
 
-    // ── Match start date and daily cap ────────────────────────────────────────
+    // ── Match start date, end date, and daily cap ─────────────────────────────
     const matchedStartName = startDayNames.length > 0 ? matchName(name, startDayNames) : null
     const startDay = matchedStartName ? startDays.get(matchedStartName) : undefined
+
+    const matchedEndName = endDayNames.length > 0 ? matchName(name, endDayNames) : null
+    const endDay = matchedEndName ? endDays.get(matchedEndName) : undefined
 
     const matchedCapName = dailyCapNames.length > 0 ? matchName(name, dailyCapNames) : null
     const dailyCap = matchedCapName ? (dailyCaps.get(matchedCapName) ?? 8) : 8
 
-    result.push({ name, projects, totalHours, travelDays: travelDaysSets, holidayDays, publicHolidays: publicHolidaySet ?? new Set(), sickDays, meetingHours: meetingHoursMap, startDay, dailyCap })
+    result.push({ name, projects, totalHours, travelDays: travelDaysSets, holidayDays, publicHolidays: publicHolidaySet ?? new Set(), sickDays, meetingHours: meetingHoursMap, startDay, endDay, dailyCap })
   }
 
   return result.sort((a, b) => a.name.localeCompare(b.name))

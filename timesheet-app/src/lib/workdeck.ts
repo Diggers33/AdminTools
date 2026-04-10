@@ -87,8 +87,9 @@ export function processLeaveRequests(
   const result: Record<string, number[]> = {}
 
   for (const req of requests) {
-    // state: 1 = accepted
-    if (req.state !== 1) continue
+    // state: 0=pending (company-set leave like "Vacaciones fijadas por IRIS"), 1=accepted, 2=denied
+    // Accept both 0 and 1 — exclude only explicitly denied (2)
+    if (req.state === 2) continue
 
     // Primary: Workdeck canonical leave type name for holidays
     // Fallback: keyword match on normalised name

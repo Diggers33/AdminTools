@@ -76,7 +76,8 @@ function buildMonthBlock(
   sickDays?: Set<number>,
   publicHolidays?: Set<number>,
   startDay?: number,
-  dailyCap?: number
+  dailyCap?: number,
+  endDay?: number
 ): number {
   const PROJECT_ROWS_PER_BLOCK = numProjectRows ?? Math.max(12, projects.length)
   const daysInMonth = new Date(year, month, 0).getDate()
@@ -94,13 +95,15 @@ function buildMonthBlock(
   for (let d = 1; d <= 31; d++) {
     const col = d + 2
     const isWknd = weekends.has(d)
-    const isTravelCol = allTravelDays?.has(d) ?? false
-    const isSickCol = !isWknd && !isTravelCol && (sickDays?.has(d) ?? false)
-    const isHolidayCol = !isWknd && !isTravelCol && !isSickCol && (holidayDays?.has(d) ?? false)
+    const isInactive = d <= daysInMonth && !isWknd && ((!!startDay && d < startDay) || (!!endDay && d > endDay))
+    const isTravelCol = !isInactive && (allTravelDays?.has(d) ?? false)
+    const isSickCol = !isWknd && !isInactive && !isTravelCol && (sickDays?.has(d) ?? false)
+    const isHolidayCol = !isWknd && !isInactive && !isTravelCol && !isSickCol && (holidayDays?.has(d) ?? false)
+    const isPublicHol = !isWknd && !isInactive && !isTravelCol && !isSickCol && !isHolidayCol && (publicHolidays?.has(d) ?? false)
     const label = d <= daysInMonth ? d : null
-    const headerFill = isWknd ? WEEKEND_FILL : isTravelCol ? TRAVEL_LEAVES_FILL : isSickCol ? SICK_FILL : isHolidayCol ? HOLIDAY_FILL : HEADER_FILL
-    const headerFont = (isWknd || isTravelCol || isSickCol || isHolidayCol)
-      ? { ...BOLD_FONT, color: { argb: isWknd ? 'FF666666' : isTravelCol ? 'FF7D4000' : isSickCol ? 'FF9C0006' : 'FF375623' } }
+    const headerFill = (isWknd || isInactive || isPublicHol) ? WEEKEND_FILL : isTravelCol ? TRAVEL_LEAVES_FILL : isSickCol ? SICK_FILL : isHolidayCol ? HOLIDAY_FILL : HEADER_FILL
+    const headerFont = (isWknd || isInactive || isPublicHol || isTravelCol || isSickCol || isHolidayCol)
+      ? { ...BOLD_FONT, color: { argb: (isWknd || isInactive || isPublicHol) ? 'FF666666' : isTravelCol ? 'FF7D4000' : isSickCol ? 'FF9C0006' : 'FF375623' } }
       : WHITE_FONT
     cell(ws, startRow + 1, col, label, headerFill, headerFont, CENTER)
   }
@@ -113,11 +116,13 @@ function buildMonthBlock(
   cell(ws, leavesRow, 2, 'LEAVE', LEAVES_FILL, NORMAL_FONT, CENTER)
   for (let d = 1; d <= 31; d++) {
     const col = d + 2
-    const isTravel = allTravelDays?.has(d) ?? false
-    const isSick = !isTravel && (sickDays?.has(d) ?? false)
-    const isHoliday = !isTravel && !isSick && (holidayDays?.has(d) ?? false)
-    const leaveVal = d <= daysInMonth ? (isTravel ? 'T' : isSick ? 'S' : isHoliday ? 'H' : 0) : null
-    const leaveFill = weekends.has(d) ? WEEKEND_FILL : isTravel ? TRAVEL_LEAVES_FILL : isSick ? SICK_FILL : isHoliday ? HOLIDAY_FILL : LEAVES_FILL
+    const isInactive = d <= daysInMonth && !weekends.has(d) && ((!!startDay && d < startDay) || (!!endDay && d > endDay))
+    const isTravel = !isInactive && (allTravelDays?.has(d) ?? false)
+    const isSick = !isInactive && !isTravel && (sickDays?.has(d) ?? false)
+    const isHoliday = !isInactive && !isTravel && !isSick && (holidayDays?.has(d) ?? false)
+    const isPublicHol = !isInactive && !isTravel && !isSick && !isHoliday && (publicHolidays?.has(d) ?? false)
+    const leaveVal = d <= daysInMonth ? (isTravel ? 'T' : isSick ? 'S' : isHoliday ? 1 : 0) : null
+    const leaveFill = (weekends.has(d) || isInactive || isPublicHol) ? WEEKEND_FILL : isTravel ? TRAVEL_LEAVES_FILL : isSick ? SICK_FILL : isHoliday ? HOLIDAY_FILL : LEAVES_FILL
     const leaveFont = isTravel
       ? { ...BOLD_FONT, color: { argb: 'FF7D4000' } }
       : isSick
@@ -147,12 +152,14 @@ function buildMonthBlock(
 
     for (let d = 1; d <= 31; d++) {
       const col = d + 2
-      const isMyTravel = proj?.travelDays?.has(d) ?? false
-      const isOtherTravel = !isMyTravel && (allTravelDays?.has(d) ?? false)
-      const isSick = sickDays?.has(d) ?? false
-      const isHoliday = !isSick && (holidayDays?.has(d) ?? false)
-      const fill = weekends.has(d) ? WEEKEND_FILL : isMyTravel ? TRAVEL_FILL : isSick ? SICK_FILL : (isOtherTravel || isHoliday) ? WEEKEND_FILL : rowFill
-      const rawVal = proj && d <= daysInMonth ? ((isHoliday || isSick) ? 0 : proj.dailyHours[d] ?? 0) : null
+      const isInactive = d <= daysInMonth && !weekends.has(d) && ((!!startDay && d < startDay) || (!!endDay && d > endDay))
+      const isMyTravel = !isInactive && (proj?.travelDays?.has(d) ?? false)
+      const isOtherTravel = !isInactive && !isMyTravel && (allTravelDays?.has(d) ?? false)
+      const isSick = !isInactive && (sickDays?.has(d) ?? false)
+      const isHoliday = !isInactive && !isSick && (holidayDays?.has(d) ?? false)
+      const isPublicHol = !isInactive && !isSick && !isHoliday && (publicHolidays?.has(d) ?? false)
+      const fill = weekends.has(d) ? WEEKEND_FILL : isInactive ? WEEKEND_FILL : isMyTravel ? TRAVEL_FILL : isSick ? SICK_FILL : (isOtherTravel || isHoliday || isPublicHol) ? WEEKEND_FILL : rowFill
+      const rawVal = proj && d <= daysInMonth ? ((isHoliday || isSick || isPublicHol || isInactive) ? 0 : proj.dailyHours[d] ?? 0) : null
       const val = rawVal
       const font = isMyTravel ? { ...BOLD_FONT, color: { argb: 'FF7D4000' } } : NORMAL_FONT
       cell(ws, rowNum, col, val, fill, font, CENTER, val && val > 0 ? '0.##;-0.##;0' : undefined)
@@ -169,7 +176,7 @@ function buildMonthBlock(
   const cap = dailyCap ?? 8
   const workingDaySet = new Set(
     getWorkingDays(year, month, publicHolidays?.size ? publicHolidays : undefined)
-      .filter(d => !startDay || d >= startDay)
+      .filter(d => (!startDay || d >= startDay) && (!endDay || d <= endDay))
   )
   ws.getRow(otherRow).height = 15
   cell(ws, otherRow, 1, 'OTHER ACTIVITIES', OTHER_FILL, BOLD_FONT, LEFT)
@@ -179,18 +186,20 @@ function buildMonthBlock(
     let val: number | null = null
     const isHoliday = holidayDays?.has(d) ?? false
     const isSick = sickDays?.has(d) ?? false
+    const isPublicHol = publicHolidays?.has(d) ?? false
+    const isInactive = d <= daysInMonth && !weekends.has(d) && ((!!startDay && d < startDay) || (!!endDay && d > endDay))
     if (d <= daysInMonth && !weekends.has(d)) {
       if (workingDaySet.has(d) && !isHoliday && !isSick) {
         const projSum = projects.reduce((s, p) => s + (p.dailyHours[d] ?? 0), 0)
         val = Math.max(0, cap - projSum)
         otherTotal += val
       } else {
-        val = 0 // public holiday, sick leave, or annual leave
+        val = 0 // public holiday, sick leave, annual leave, or inactive day
       }
     } else if (d <= daysInMonth) {
       val = 0 // weekend
     }
-    const otherFill = isSick && d <= daysInMonth && !weekends.has(d) ? SICK_FILL : isHoliday && d <= daysInMonth && !weekends.has(d) ? HOLIDAY_FILL : weekends.has(d) ? WEEKEND_FILL : OTHER_FILL
+    const otherFill = (weekends.has(d) || isPublicHol || isInactive) ? WEEKEND_FILL : isSick && d <= daysInMonth ? SICK_FILL : isHoliday && d <= daysInMonth ? HOLIDAY_FILL : OTHER_FILL
     cell(ws, otherRow, d + 2, val, otherFill, NORMAL_FONT, CENTER)
   }
   const otc = ws.getCell(otherRow, 34)
@@ -209,14 +218,16 @@ function buildMonthBlock(
     const tc = ws.getCell(totalRow, col)
     const isHoliday = holidayDays?.has(d) ?? false
     const isSick = sickDays?.has(d) ?? false
+    const isPublicHol = publicHolidays?.has(d) ?? false
+    const isInactive = d <= daysInMonth && !weekends.has(d) && ((!!startDay && d < startDay) || (!!endDay && d > endDay))
     if (d <= daysInMonth) {
-      const projSum = (isHoliday || isSick) ? 0 : projects.reduce((s, p) => s + (p.dailyHours[d] ?? 0), 0)
+      const projSum = (isHoliday || isSick || isPublicHol || isInactive) ? 0 : projects.reduce((s, p) => s + (p.dailyHours[d] ?? 0), 0)
       const otherVal = (!weekends.has(d) && workingDaySet.has(d) && !isHoliday && !isSick) ? Math.max(0, cap - projSum) : 0
       const daySum = projSum + otherVal
       tc.value = daySum
       grandTotal += daySum
     }
-    tc.fill = weekends.has(d) ? WEEKEND_FILL : isSick ? SICK_FILL : isHoliday ? HOLIDAY_FILL : TOTAL_FILL
+    tc.fill = (weekends.has(d) || isPublicHol || isInactive) ? WEEKEND_FILL : isSick ? SICK_FILL : isHoliday ? HOLIDAY_FILL : TOTAL_FILL
     tc.font = TOTAL_FONT; tc.alignment = CENTER; tc.border = ALL_BORDERS
   }
   const gtc = ws.getCell(totalRow, 34)
@@ -274,9 +285,10 @@ export async function generateTimesheet(
   const publicHolidays = employee.publicHolidays?.size ? employee.publicHolidays : undefined
   const dailyCap = employee.dailyCap ?? 8
   const startDay = employee.startDay
-  // Exclude public holidays and days before the employee's start date
+  const endDay = employee.endDay
+  // Exclude public holidays and days outside the employee's active range
   const workingDays = getWorkingDays(year, month, publicHolidays)
-    .filter(d => !startDay || d >= startDay)
+    .filter(d => (!startDay || d >= startDay) && (!endDay || d <= endDay))
   const workingDaySet = new Set(workingDays)
   const PROJECT_ROWS_PER_BLOCK = Math.max(12, employee.projects.length)
   const capped = employee.projects.slice(0, PROJECT_ROWS_PER_BLOCK)
@@ -290,18 +302,27 @@ export async function generateTimesheet(
     for (const d of Array.from(days)) if (workingDaySet.has(d)) allTravelDays.add(d)
   }
 
-  // Step 1: pin travel days at 8h on the travel project; zero out all other projects on those days
-  const projectDailyHours: Array<Record<number, number>> = capped.map(p => {
+  // Step 1: pin travel days at dailyCap on the travel project; zero out all other projects on those days.
+  // If multiple projects claim the same travel day (data error), only the first project wins.
+  const travelDayOwner = new Map<number, number>()
+  for (let i = 0; i < capped.length; i++) {
+    const myTravelDays = travelDays[capped[i].project]
+    if (!myTravelDays) continue
+    for (const d of Array.from(myTravelDays)) {
+      if (workingDaySet.has(d) && !travelDayOwner.has(d)) travelDayOwner.set(d, i)
+    }
+  }
+  const projectDailyHours: Array<Record<number, number>> = capped.map((p, i) => {
     const pinned: Record<number, number> = {}
     const myTravelDays = travelDays[p.project]
     if (myTravelDays) {
       for (const d of Array.from(myTravelDays)) {
-        if (workingDaySet.has(d)) pinned[d] = dailyCap
+        if (workingDaySet.has(d) && travelDayOwner.get(d) === i) pinned[d] = dailyCap
       }
     }
-    // Explicitly zero out any travel days belonging to OTHER projects (employee is away)
+    // Zero out all travel days not owned by this project
     for (const d of Array.from(allTravelDays)) {
-      if (!(myTravelDays?.has(d))) pinned[d] = 0
+      if (pinned[d] === undefined) pinned[d] = 0
     }
     return pinned
   })
@@ -394,7 +415,7 @@ export async function generateTimesheet(
     dailyHours: projectDailyHours[i],
     travelDays: travelDays[p.project] instanceof Set ? travelDays[p.project] as Set<number> : new Set<number>(Array.from(travelDays[p.project] || []))
   }))
-  buildMonthBlock(ws, 6, month, year, projectsWithHours, allTravelDays, PROJECT_ROWS_PER_BLOCK, holidayDays, sickDays, publicHolidays, startDay, dailyCap)
+  buildMonthBlock(ws, 6, month, year, projectsWithHours, allTravelDays, PROJECT_ROWS_PER_BLOCK, holidayDays, sickDays, publicHolidays, startDay, dailyCap, endDay)
 
   const buffer = await workbook.xlsx.writeBuffer()
   return Buffer.from(buffer as ArrayBuffer)
