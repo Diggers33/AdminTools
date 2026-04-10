@@ -63,7 +63,7 @@ export default function Home() {
   const [expandedVerify, setExpandedVerify] = useState<string | null>(null)
   const [workdeckConnected, setWorkdeckConnected] = useState(false)
   const [workdeckEmail, setWorkdeckEmail] = useState('')
-  const [workdeckData, setWorkdeckData] = useState<{ holidays: Record<string, number[]>; meetings: Record<string, Record<string, Record<number, number>>>; publicHolidays?: number[] } | null>(null)
+  const [workdeckData, setWorkdeckData] = useState<{ holidays: Record<string, number[]>; meetings: Record<string, Record<string, Record<number, number>>>; publicHolidays?: number[]; leaveDebug?: { total: number; leaveTypeNames: string[]; leaveStateValues: unknown[]; rawLeaveKeys: string[]; sampleLeaveKeys: string[]; sampleLeave: unknown; matchedCount: number } } | null>(null)
   const [workdeckLoading, setWorkdeckLoading] = useState(false)
   const [activeTool, setActiveTool] = useState<'timesheets' | 'approvals' | null>(null)
   const zipBlobRef = useRef<Blob | null>(null)
@@ -497,6 +497,17 @@ export default function Home() {
             )}
             </div>
             <p style={{ color: '#5a7a9a', marginBottom: 20, fontSize: 14 }}>Click any row to expand. Deselect to skip.</p>
+
+            {workdeckData?.leaveDebug && (
+              <details style={{ marginBottom: 16, fontSize: 11, color: '#5a7a9a', background: '#f8faff', border: '1px solid #c8d8ed', borderRadius: 6, padding: '6px 12px' }}>
+                <summary style={{ cursor: 'pointer', userSelect: 'none' }}>
+                  Workdeck leave debug — {workdeckData.leaveDebug.total} leave requests received, {workdeckData.leaveDebug.matchedCount} employees matched
+                </summary>
+                <pre style={{ marginTop: 8, fontSize: 10, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  {JSON.stringify(workdeckData.leaveDebug, null, 2)}
+                </pre>
+              </details>
+            )}
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', background: '#f0f4fa', borderRadius: '8px 8px 0 0', border: '1px solid #c8d8ed', borderBottom: 'none' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#5a7a9a' }}>

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { processLeaveRequests, processUserEvents, extractNonWorkingDays } from '@/lib/workdeck'
+import { processLeaveRequests, processUserEvents, extractNonWorkingDays, WorkdeckLeaveRequest } from '@/lib/workdeck'
 import { getWorkingDays, matchName } from '@/lib/processor'
 
 export const runtime = 'nodejs'
@@ -67,6 +67,16 @@ export async function POST(req: NextRequest) {
     if (uuid) repNameToUUID.set(repName, uuid)
   }
 
+  // Diagnostic: capture raw leave structure before processing
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sampleLeave: any = leaveRequests[0] ?? null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const leaveTypeNames = Array.from(new Set((leaveRequests as any[]).map(r =>
+    r.leaveType?.name ?? r.type?.name ?? r.leave_type?.name ?? '?'
+  ))).slice(0, 20)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const leaveStateValues = Array.from(new Set((leaveRequests as any[]).map(r => r.state ?? r.status ?? '?'))).slice(0, 10)
+
   // Process leave requests → per-employee holiday days
   const holidaysByWdName = processLeaveRequests(leaveRequests, year, month, workingDaySet)
 
@@ -75,6 +85,18 @@ export async function POST(req: NextRequest) {
   for (const [repName, uuid] of Array.from(repNameToUUID.entries())) {
     const wdName = uuidToName.get(uuid)!
     if (holidaysByWdName[wdName]?.length) holidays[repName] = Array.from(new Set(holidaysByWdName[wdName]))
+  }
+
+  // Build debug payload (also captures the raw response wrapper keys so we can see the data structure)
+  const leaveDebug = {
+    total: leaveRequests.length,
+    leaveTypeNames,
+    leaveStateValues,
+    // Keys at the raw response level (to detect wrapper like { result: [] } vs { items: [] })
+    rawLeaveKeys: leaveRaw ? Object.keys(leaveRaw).slice(0, 15) : [],
+    sampleLeaveKeys: sampleLeave ? Object.keys(sampleLeave).slice(0, 20) : [],
+    sampleLeave,
+    matchedCount: Object.keys(holidays).length,
   }
 
   // Fetch calendar events for matched UUIDs in batches of 10
@@ -100,5 +122,5 @@ export async function POST(req: NextRequest) {
     if (Object.keys(processed).length > 0) meetings[repName] = processed
   }
 
-  return NextResponse.json({ holidays, meetings, publicHolidays })
+  return NextResponse.json({ holidays, meetings, publicHolidays, leaveDebug })
 }
