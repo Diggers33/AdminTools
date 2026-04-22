@@ -446,7 +446,7 @@ export default function Home() {
                 inputRef={travelInputRef} onChange={e => { const f = e.target.files?.[0]; if (f) { setTravelFile(f); setError(null) } }} required={false} icon={'\u2708'} />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 0 }}>
-              <DropZone label="Sick Leave File" sublabel="Optional · LISTA ALTAS_BAJAS · TABLAS sheet" file={sickFile}
+              <DropZone label="Sick Leave File" sublabel="Optional · ALTAS_BAJAS_CONSULTA · Alta-Baja &amp; Enfermedad sheets" file={sickFile}
                 onDrop={handleSickDrop} onBrowse={() => sickInputRef.current?.click()}
                 inputRef={sickInputRef} onChange={e => { const f = e.target.files?.[0]; if (f) { setSickFile(f); setError(null) } }} required={false} icon={'\u271A'} iconColor="#c0392b" />
               <div />

@@ -315,10 +315,10 @@ export function parseSickLeaveFile(
   workingDaySet: Set<number>
 ): Record<string, Set<number>> {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: true })
-  const ws = wb.Sheets['TABLAS']
+  const ws = wb.Sheets['Enfermedad - Matern. - Patern.']
   if (!ws) return {}
 
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { header: 0, defval: null })
   const result: Record<string, Set<number>> = {}
   const monthStart = new Date(Date.UTC(year, month - 1, 1))
   const monthEnd   = new Date(Date.UTC(year, month, 0))
@@ -329,22 +329,17 @@ export function parseSickLeaveFile(
     return null
   }
 
-  // TABLA BAJAS is in cols E(4), F(5), G(6), H(7) — data starts at row index 2
-  for (let i = 2; i < rows.length; i++) {
-    const row = rows[i] as unknown[]
-    const empRaw  = row[4]
-    const bajaRaw = row[5]   // FECHA BAJA — first sick day
-    const altaRaw = row[6]   // FECHA ALTA — return date (last sick day inclusive)
+  for (const row of rows) {
+    const nombre   = String(row['Nombre'] || '').trim()
+    const ap1      = String(row['Primer apellido'] || '').trim()
+    const ap2      = String(row['Segundo apellido'] || '').trim()
+    if (!nombre || !ap1) continue
+    const empName = [nombre, ap1, ap2].filter(Boolean).join(' ')
 
-    if (!empRaw || !bajaRaw) continue
-    const empName = String(empRaw).trim()
-    // Skip section header rows
-    if (empName === 'EMPLEADO/A' || empName.startsWith('TABLA') || empName.startsWith('HORAS')) continue
-
-    const start = toDate(bajaRaw)
+    // Fecha alta = first day of leave, Fecha baja = last day of leave
+    const start = toDate(row['Fecha alta'])
     if (!start) continue
-    // If no end date, employee is still on leave — cover through month end
-    const end = toDate(altaRaw) ?? monthEnd
+    const end = toDate(row['Fecha baja']) ?? monthEnd
 
     if (start > monthEnd || end < monthStart) continue
 
@@ -362,17 +357,17 @@ export function parseSickLeaveFile(
   return result
 }
 
-// ── Parse start dates (TABLA ALTA CONTRATO) and reduced hours (JORNADAS REDUCIDAS / HORAS CONVENIO) ──
+// ── Parse start/end dates and reduced hours from Alta - Baja - Suspensión sheet ──
 function parseContractAndJornada(
   buffer: ArrayBuffer,
   month: number,
   year: number
 ): { startDays: Map<string, number>; endDays: Map<string, number>; dailyCaps: Map<string, number> } {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: true })
-  const ws = wb.Sheets['TABLAS']
+  const ws = wb.Sheets['Alta - Baja - Suspensión']
   if (!ws) return { startDays: new Map(), endDays: new Map(), dailyCaps: new Map() }
 
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { header: 0, defval: null })
   const monthStart = new Date(Date.UTC(year, month - 1, 1))
   const monthEnd   = new Date(Date.UTC(year, month, 0))
 
@@ -382,11 +377,10 @@ function parseContractAndJornada(
     return null
   }
 
-  // Normalise JORNADA value to a fraction 0–1 (exclusive of 1 = full-time)
   const parseJornadaFrac = (v: unknown): number | null => {
     let n: number
     if (typeof v === 'number') {
-      n = v <= 1.5 ? v : v / 100  // ≤1.5 already a fraction; otherwise a percentage
+      n = v <= 1.5 ? v : v / 100
     } else if (typeof v === 'string') {
       const cleaned = v.replace(',', '.').replace('%', '').trim()
       n = parseFloat(cleaned)
@@ -401,79 +395,44 @@ function parseContractAndJornada(
   const endDays   = new Map<string, number>()
   const dailyCaps = new Map<string, number>()
 
-  // ── TABLA ALTA CONTRATO (cols A-C, rows 2 until "TABLA BAJA CONTRATO") ────
-  for (let i = 2; i < rows.length; i++) {
-    const row = rows[i] as unknown[]
-    const empRaw = row[0]
-    if (!empRaw) continue
-    const cell = String(empRaw).trim()
-    if (cell.startsWith('TABLA')) break
-    if (cell === 'EMPLEADO/A') continue
-    const d = toDate(row[1])
-    // Only record if the employee started mid-month (after day 1) in the selected month
-    if (d && d.getUTCFullYear() === year && d.getUTCMonth() + 1 === month && d.getUTCDate() > 1) {
-      startDays.set(cell, d.getUTCDate())
-    }
-  }
+  for (const row of rows) {
+    const nombre = String(row['Nombre'] || '').trim()
+    const ap1    = String(row['Primer apellido'] || '').trim()
+    const ap2    = String(row['Segundo apellido'] || '').trim()
+    if (!nombre || !ap1) continue
+    const empName = [nombre, ap1, ap2].filter(Boolean).join(' ')
 
-  // ── TABLA JORNADAS REDUCIDAS (cols J-N = indices 9-13) ────────────────────
-  for (let r = 2; r < rows.length; r++) {
-    const row = rows[r] as unknown[]
-    const empRaw = row[9]
-    if (!empRaw) continue
-    const cell = String(empRaw).trim()
-    if (cell === 'EMPLEADO' || cell.startsWith('TABLA')) continue
+    const fechaAlta = toDate(row['Fecha alta'])
+    const fechaBaja = toDate(row['Fecha baja'])
 
-    const frac = parseJornadaFrac(row[10])
-    if (frac === null) continue
+    // Skip contracts that ended before or started after the target month
+    if (fechaAlta && fechaAlta > monthEnd) continue
+    if (fechaBaja && fechaBaja < monthStart) continue
 
-    const startDate = toDate(row[11])
-    const endDate   = toDate(row[12])  // null = ongoing
-
-    if (!startDate || startDate > monthEnd) continue
-    if (endDate && endDate < monthStart) continue
-
-    const cap = Math.round(frac * 8 * 10) / 10
-    const existing = dailyCaps.get(cell)
-    if (existing === undefined || cap < existing) dailyCaps.set(cell, cap)
-  }
-
-  // ── TABLA BAJA CONTRATO (cols A-B, follows TABLA ALTA CONTRATO in col 0) ────
-  {
-    let inBaja = false
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i] as unknown[]
-      const empRaw = row[0]
-      if (!empRaw) continue
-      const cellStr = String(empRaw).trim()
-      if (cellStr === 'TABLA BAJA CONTRATO') { inBaja = true; continue }
-      if (!inBaja) continue
-      if (cellStr === 'EMPLEADO/A') continue
-      if (cellStr.startsWith('TABLA')) break  // next table section
-      const d = toDate(row[1])
-      // Record any end date that falls within the selected month
-      if (d && d.getUTCFullYear() === year && d.getUTCMonth() + 1 === month) {
-        endDays.set(cellStr, d.getUTCDate())
+    // Start date: record if the employee joined mid-month in the target month
+    if (fechaAlta && fechaAlta.getUTCFullYear() === year && fechaAlta.getUTCMonth() + 1 === month && fechaAlta.getUTCDate() > 1) {
+      const existing = startDays.get(empName)
+      // If multiple contracts match (contract change mid-month), take the latest start
+      if (existing === undefined || fechaAlta.getUTCDate() > existing) {
+        startDays.set(empName, fechaAlta.getUTCDate())
       }
     }
-  }
 
-  // ── TABLA HORAS CONVENIO (cols E-G detected by header in col E) ───────────
-  for (let r = 0; r < rows.length; r++) {
-    if (String(rows[r][4] ?? '').trim() !== 'TABLA HORAS CONVENIO') continue
-    for (let dr = r + 2; dr < rows.length; dr++) {
-      const dataRow = rows[dr] as unknown[]
-      const empRaw = dataRow[4]
-      if (!empRaw) break
-      const cell = String(empRaw).trim()
-      if (cell === 'EMPLEADO/A' || cell.startsWith('TABLA')) break
-      const weeklyHours = typeof dataRow[6] === 'number' ? dataRow[6] : parseFloat(String(dataRow[6] ?? ''))
-      if (isNaN(weeklyHours) || weeklyHours <= 0 || weeklyHours >= 40) continue
-      const cap = Math.round((weeklyHours / 5) * 10) / 10
-      const existing = dailyCaps.get(cell)
-      if (existing === undefined || cap < existing) dailyCaps.set(cell, cap)
+    // End date: record if the employee left mid-month in the target month
+    if (fechaBaja && fechaBaja.getUTCFullYear() === year && fechaBaja.getUTCMonth() + 1 === month) {
+      const existing = endDays.get(empName)
+      if (existing === undefined || fechaBaja.getUTCDate() < existing) {
+        endDays.set(empName, fechaBaja.getUTCDate())
+      }
     }
-    break
+
+    // Jornada: set reduced daily cap
+    const frac = parseJornadaFrac(row['Jornada'])
+    if (frac !== null) {
+      const cap = Math.round(frac * 8 * 10) / 10
+      const existing = dailyCaps.get(empName)
+      if (existing === undefined || cap < existing) dailyCaps.set(empName, cap)
+    }
   }
 
   return { startDays, endDays, dailyCaps }
