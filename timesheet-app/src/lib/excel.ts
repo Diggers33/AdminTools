@@ -13,6 +13,7 @@ const TRAVEL_FILL: ExcelJS.Fill        = { type: 'pattern', pattern: 'solid', fg
 const TRAVEL_LEAVES_FILL: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFAA40' } } // darker amber for T cells
 const HOLIDAY_FILL: ExcelJS.Fill       = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6EFCE' } } // soft green for holiday days
 const SICK_FILL: ExcelJS.Fill          = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC7CE' } } // soft red for sick days
+const PARTIAL_LEAVE_FILL: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2D0F0' } } // soft purple for partial leave (paternity/maternity)
 const PROJECT_FILL: ExcelJS.Fill     = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } }
 const ALT_PROJECT_FILL: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } }
 const META_LABEL_FILL: ExcelJS.Fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDAE3F3' } }
@@ -77,7 +78,8 @@ function buildMonthBlock(
   publicHolidays?: Set<number>,
   startDay?: number,
   dailyCap?: number,
-  endDay?: number
+  endDay?: number,
+  partialLeaveDays?: Map<number, number>
 ): number {
   const PROJECT_ROWS_PER_BLOCK = numProjectRows ?? Math.max(12, projects.length)
   const daysInMonth = new Date(year, month, 0).getDate()
@@ -121,20 +123,31 @@ function buildMonthBlock(
     const isSick = !isInactive && !isTravel && (sickDays?.has(d) ?? false)
     const isHoliday = !isInactive && !isTravel && !isSick && (holidayDays?.has(d) ?? false)
     const isPublicHol = !isInactive && !isTravel && !isSick && !isHoliday && (publicHolidays?.has(d) ?? false)
-    const leaveVal = d <= daysInMonth ? (isTravel ? 'T' : isSick ? 'S' : isHoliday ? 1 : 0) : null
-    const leaveFill = (weekends.has(d) || isInactive || isPublicHol) ? WEEKEND_FILL : isTravel ? TRAVEL_LEAVES_FILL : isSick ? SICK_FILL : isHoliday ? HOLIDAY_FILL : LEAVES_FILL
+    const partialCap = !isInactive && !isTravel && !isSick && !isHoliday ? (partialLeaveDays?.get(d)) : undefined
+    const isPartialLeave = partialCap !== undefined
+    // Partial leave value is the leave fraction (e.g. 0.5 for 50% paternity)
+    const partialLeaveVal = isPartialLeave ? Math.round((1 - partialCap / 8) * 100) / 100 : undefined
+    const leaveVal = d <= daysInMonth ? (isTravel ? 'T' : isSick ? 'S' : isHoliday ? 1 : isPartialLeave ? partialLeaveVal! : 0) : null
+    const leaveFill = (weekends.has(d) || isInactive || isPublicHol) ? WEEKEND_FILL : isTravel ? TRAVEL_LEAVES_FILL : isSick ? SICK_FILL : isHoliday ? HOLIDAY_FILL : isPartialLeave ? PARTIAL_LEAVE_FILL : LEAVES_FILL
     const leaveFont = isTravel
       ? { ...BOLD_FONT, color: { argb: 'FF7D4000' } }
       : isSick
         ? { ...BOLD_FONT, color: { argb: 'FF9C0006' } }
         : isHoliday
           ? { ...BOLD_FONT, color: { argb: 'FF375623' } }
-          : NORMAL_FONT
+          : isPartialLeave
+            ? { ...BOLD_FONT, color: { argb: 'FF4B0082' } }
+            : NORMAL_FONT
     cell(ws, leavesRow, col, leaveVal, leaveFill, leaveFont, CENTER)
   }
   const holidayDayCount = holidayDays ? Array.from(holidayDays).filter(d => d <= daysInMonth).length : 0
   const sickDayCount = sickDays ? Array.from(sickDays).filter(d => d <= daysInMonth).length : 0
-  ws.getCell(leavesRow, 34).value = holidayDayCount + sickDayCount
+  const partialLeaveFrac = partialLeaveDays
+    ? Array.from(partialLeaveDays.entries())
+        .filter(([d]) => d <= daysInMonth)
+        .reduce((s, [, c]) => s + Math.round((1 - c / 8) * 100) / 100, 0)
+    : 0
+  ws.getCell(leavesRow, 34).value = Math.round((holidayDayCount + sickDayCount + partialLeaveFrac) * 100) / 100
   ws.getCell(leavesRow, 34).fill = LEAVES_FILL
   ws.getCell(leavesRow, 34).font = BOLD_FONT
   ws.getCell(leavesRow, 34).alignment = CENTER
@@ -171,9 +184,10 @@ function buildMonthBlock(
     tc.fill = rowFill; tc.font = BOLD_FONT; tc.alignment = CENTER; tc.border = ALL_BORDERS
   }
 
-  // Row 16: Other Activities — fills to 8h on working days (8 - project hours, min 0)
+  // Row 16: Other Activities — fills to cap on working days (cap - project hours, min 0)
   const otherRow = startRow + 3 + PROJECT_ROWS_PER_BLOCK
   const cap = dailyCap ?? 8
+  const dayCapFor = (d: number) => partialLeaveDays?.get(d) ?? cap
   const workingDaySet = new Set(
     getWorkingDays(year, month, publicHolidays?.size ? publicHolidays : undefined)
       .filter(d => (!startDay || d >= startDay) && (!endDay || d <= endDay))
@@ -191,7 +205,7 @@ function buildMonthBlock(
     if (d <= daysInMonth && !weekends.has(d)) {
       if (workingDaySet.has(d) && !isHoliday && !isSick) {
         const projSum = projects.reduce((s, p) => s + (p.dailyHours[d] ?? 0), 0)
-        val = Math.max(0, cap - projSum)
+        val = Math.max(0, dayCapFor(d) - projSum)
         otherTotal += val
       } else {
         val = 0 // public holiday, sick leave, annual leave, or inactive day
@@ -222,7 +236,7 @@ function buildMonthBlock(
     const isInactive = d <= daysInMonth && !weekends.has(d) && ((!!startDay && d < startDay) || (!!endDay && d > endDay))
     if (d <= daysInMonth) {
       const projSum = (isHoliday || isSick || isPublicHol || isInactive) ? 0 : projects.reduce((s, p) => s + (p.dailyHours[d] ?? 0), 0)
-      const otherVal = (!weekends.has(d) && workingDaySet.has(d) && !isHoliday && !isSick) ? Math.max(0, cap - projSum) : 0
+      const otherVal = (!weekends.has(d) && workingDaySet.has(d) && !isHoliday && !isSick) ? Math.max(0, dayCapFor(d) - projSum) : 0
       const daySum = projSum + otherVal
       tc.value = daySum
       grandTotal += daySum
@@ -418,7 +432,7 @@ export async function generateTimesheet(
     dailyHours: projectDailyHours[i],
     travelDays: travelDays[p.project] instanceof Set ? travelDays[p.project] as Set<number> : new Set<number>(Array.from(travelDays[p.project] || []))
   }))
-  buildMonthBlock(ws, 6, month, year, projectsWithHours, allTravelDays, PROJECT_ROWS_PER_BLOCK, holidayDays, sickDays, publicHolidays, startDay, dailyCap, endDay)
+  buildMonthBlock(ws, 6, month, year, projectsWithHours, allTravelDays, PROJECT_ROWS_PER_BLOCK, holidayDays, sickDays, publicHolidays, startDay, dailyCap, endDay, partialLeaveDays)
 
   const buffer = await workbook.xlsx.writeBuffer()
   return Buffer.from(buffer as ArrayBuffer)
