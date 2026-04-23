@@ -313,13 +313,14 @@ export function parseSickLeaveFile(
   month: number,
   year: number,
   workingDaySet: Set<number>
-): Record<string, Set<number>> {
+): { sickDays: Record<string, Set<number>>; partialCaps: Record<string, number> } {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: true })
   const ws = wb.Sheets['Enfermedad - Matern. - Patern.']
-  if (!ws) return {}
+  if (!ws) return { sickDays: {}, partialCaps: {} }
 
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { header: 0, defval: null })
-  const result: Record<string, Set<number>> = {}
+  const sickDays: Record<string, Set<number>> = {}
+  const partialCaps: Record<string, number> = {}
   const monthStart = new Date(Date.UTC(year, month - 1, 1))
   const monthEnd   = new Date(Date.UTC(year, month, 0))
 
@@ -329,32 +330,54 @@ export function parseSickLeaveFile(
     return null
   }
 
+  const parseJornadaFrac = (v: unknown): number => {
+    if (typeof v === 'number') return v <= 1.5 ? v : v / 100
+    if (typeof v === 'string') {
+      const n = parseFloat(v.replace(',', '.').replace('%', '').trim())
+      if (isNaN(n) || n <= 0) return 1
+      return v.includes('%') || n > 1.5 ? n / 100 : n
+    }
+    return 1
+  }
+
   for (const row of rows) {
-    const nombre   = String(row['Nombre'] || '').trim()
-    const ap1      = String(row['Primer apellido'] || '').trim()
-    const ap2      = String(row['Segundo apellido'] || '').trim()
+    const nombre = String(row['Nombre'] || '').trim()
+    const ap1    = String(row['Primer apellido'] || '').trim()
+    const ap2    = String(row['Segundo apellido'] || '').trim()
     if (!nombre || !ap1) continue
     const empName = [nombre, ap1, ap2].filter(Boolean).join(' ')
 
-    // Fecha alta = first day of leave, Fecha baja = last day of leave
     const start = toDate(row['Fecha alta'])
     if (!start) continue
     const end = toDate(row['Fecha baja']) ?? monthEnd
 
     if (start > monthEnd || end < monthStart) continue
 
+    const jornada = parseJornadaFrac(row['Jornada'])
+
+    // Partial leave (e.g. 50% paternity): employee works reduced hours — don't block days,
+    // but record the reduced daily cap so distributeHours respects it.
+    if (jornada < 1) {
+      const cap = Math.round(jornada * 8 * 10) / 10
+      if (!(empName in partialCaps) || cap < partialCaps[empName]) {
+        partialCaps[empName] = cap
+      }
+      continue
+    }
+
+    // Full sick leave: block those working days entirely
     const from = start < monthStart ? new Date(monthStart) : new Date(start)
     const to   = end   > monthEnd   ? new Date(monthEnd)   : new Date(end)
 
-    if (!result[empName]) result[empName] = new Set()
+    if (!sickDays[empName]) sickDays[empName] = new Set()
     for (let cur = new Date(from); cur <= to; cur.setUTCDate(cur.getUTCDate() + 1)) {
       if (cur.getUTCFullYear() === year && cur.getUTCMonth() + 1 === month && workingDaySet.has(cur.getUTCDate())) {
-        result[empName].add(cur.getUTCDate())
+        sickDays[empName].add(cur.getUTCDate())
       }
     }
   }
 
-  return result
+  return { sickDays, partialCaps }
 }
 
 // ── Parse start/end dates and reduced hours from Alta - Baja - Suspensión sheet ──
@@ -432,6 +455,17 @@ function parseContractAndJornada(
       const cap = Math.round(frac * 8 * 10) / 10
       const existing = dailyCaps.get(empName)
       if (existing === undefined || cap < existing) dailyCaps.set(empName, cap)
+    }
+  }
+
+  // Seamless contract transition: if startDay > endDay for the same employee, the old
+  // contract ended and a new one started within the same month — the employee is active
+  // all month. Clear both constraints so no days are incorrectly blocked.
+  for (const [name, sd] of Array.from(startDays.entries())) {
+    const ed = endDays.get(name)
+    if (ed !== undefined && sd > ed) {
+      startDays.delete(name)
+      endDays.delete(name)
     }
   }
 
@@ -566,12 +600,18 @@ export function extractEmployeeData(
   }
 
   // ── Parse sick leave, start dates, and reduced hours from the same file ────
-  const rawSickMap: Record<string, Set<number>> = sickLeaveBuffer
+  const { sickDays: rawSickMap, partialCaps } = sickLeaveBuffer
     ? parseSickLeaveFile(sickLeaveBuffer, month, year, workingDaySet)
-    : {}
+    : { sickDays: {} as Record<string, Set<number>>, partialCaps: {} as Record<string, number> }
   const { startDays, endDays, dailyCaps } = sickLeaveBuffer
     ? parseContractAndJornada(sickLeaveBuffer, month, year)
     : { startDays: new Map<string, number>(), endDays: new Map<string, number>(), dailyCaps: new Map<string, number>() }
+  // Merge partial-leave caps (e.g. 50% paternity) into dailyCaps, taking the lower value
+  for (const [name, cap] of Object.entries(partialCaps)) {
+    const existing = dailyCaps.get(name)
+    if (existing === undefined || cap < existing) dailyCaps.set(name, cap)
+  }
+
   const startDayNames = Array.from(startDays.keys())
   const endDayNames   = Array.from(endDays.keys())
   const dailyCapNames = Array.from(dailyCaps.keys())
