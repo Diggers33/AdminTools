@@ -295,6 +295,7 @@ export async function generateTimesheet(
   const travelDays = employee.travelDays || {}
   const holidayDays = employee.holidayDays || new Set<number>()
   const sickDays = employee.sickDays || new Set<number>()
+  const partialLeaveDays = employee.partialLeaveDays
 
   // Collect ALL travel days across all projects — employee is unavailable for other projects on these days
   const allTravelDays = new Set<number>()
@@ -305,6 +306,8 @@ export async function generateTimesheet(
   // Step 1: pin travel days at dailyCap on the travel project; zero out all other projects on those days.
   // If multiple projects claim the same travel day (data error), only the first project wins.
   const travelDayOwner = new Map<number, number>()
+  const dayCapFor = (d: number) => partialLeaveDays?.get(d) ?? dailyCap
+
   for (let i = 0; i < capped.length; i++) {
     const myTravelDays = travelDays[capped[i].project]
     if (!myTravelDays) continue
@@ -317,7 +320,7 @@ export async function generateTimesheet(
     const myTravelDays = travelDays[p.project]
     if (myTravelDays) {
       for (const d of Array.from(myTravelDays)) {
-        if (workingDaySet.has(d) && travelDayOwner.get(d) === i) pinned[d] = dailyCap
+        if (workingDaySet.has(d) && travelDayOwner.get(d) === i) pinned[d] = dayCapFor(d)
       }
     }
     // Zero out all travel days not owned by this project
@@ -334,7 +337,7 @@ export async function generateTimesheet(
   const freeDays = workingDays.filter(d => !allTravelDays.has(d) && !holidayDays.has(d) && !sickDays.has(d))
   // Track daily capacity remaining across all projects
   const dayRemaining: Record<number, number> = {}
-  for (const d of freeDays) dayRemaining[d] = dailyCap
+  for (const d of freeDays) dayRemaining[d] = dayCapFor(d)
 
   const meetingHours = employee.meetingHours || {}
 

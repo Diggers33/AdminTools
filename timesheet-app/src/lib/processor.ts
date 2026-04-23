@@ -20,6 +20,8 @@ export interface EmployeeMonth {
   endDay?: number
   // Max hours assignable per working day (default 8; less for reduced schedules)
   dailyCap: number
+  // Per-day hour caps for partial leave (e.g. 50% paternity on specific dates): day → hoursCap
+  partialLeaveDays?: Map<number, number>
 }
 
 // Spanish public holidays (month 1-indexed, day)
@@ -313,14 +315,14 @@ export function parseSickLeaveFile(
   month: number,
   year: number,
   workingDaySet: Set<number>
-): { sickDays: Record<string, Set<number>>; partialCaps: Record<string, number> } {
+): { sickDays: Record<string, Set<number>>; partialLeaveDays: Record<string, Map<number, number>> } {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: true })
   const ws = wb.Sheets['Enfermedad - Matern. - Patern.']
-  if (!ws) return { sickDays: {}, partialCaps: {} }
+  if (!ws) return { sickDays: {}, partialLeaveDays: {} }
 
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { header: 0, defval: null })
   const sickDays: Record<string, Set<number>> = {}
-  const partialCaps: Record<string, number> = {}
+  const partialLeaveDays: Record<string, Map<number, number>> = {}
   const monthStart = new Date(Date.UTC(year, month - 1, 1))
   const monthEnd   = new Date(Date.UTC(year, month, 0))
 
@@ -354,30 +356,33 @@ export function parseSickLeaveFile(
     if (start > monthEnd || end < monthStart) continue
 
     const jornada = parseJornadaFrac(row['Jornada'])
-
-    // Partial leave (e.g. 50% paternity): employee works reduced hours — don't block days,
-    // but record the reduced daily cap so distributeHours respects it.
-    if (jornada < 1) {
-      const cap = Math.round(jornada * 8 * 10) / 10
-      if (!(empName in partialCaps) || cap < partialCaps[empName]) {
-        partialCaps[empName] = cap
-      }
-      continue
-    }
-
-    // Full sick leave: block those working days entirely
     const from = start < monthStart ? new Date(monthStart) : new Date(start)
     const to   = end   > monthEnd   ? new Date(monthEnd)   : new Date(end)
 
-    if (!sickDays[empName]) sickDays[empName] = new Set()
-    for (let cur = new Date(from); cur <= to; cur.setUTCDate(cur.getUTCDate() + 1)) {
-      if (cur.getUTCFullYear() === year && cur.getUTCMonth() + 1 === month && workingDaySet.has(cur.getUTCDate())) {
-        sickDays[empName].add(cur.getUTCDate())
+    if (jornada < 1) {
+      // Partial leave (e.g. 50% paternity): cap those specific working days at jornada * 8h
+      const cap = Math.round(jornada * 8 * 10) / 10
+      if (!partialLeaveDays[empName]) partialLeaveDays[empName] = new Map()
+      for (let cur = new Date(from); cur <= to; cur.setUTCDate(cur.getUTCDate() + 1)) {
+        if (cur.getUTCFullYear() === year && cur.getUTCMonth() + 1 === month && workingDaySet.has(cur.getUTCDate())) {
+          const d = cur.getUTCDate()
+          // Take the lowest cap if multiple partial-leave entries cover the same day
+          const existing = partialLeaveDays[empName].get(d)
+          if (existing === undefined || cap < existing) partialLeaveDays[empName].set(d, cap)
+        }
+      }
+    } else {
+      // Full sick leave: block those working days entirely
+      if (!sickDays[empName]) sickDays[empName] = new Set()
+      for (let cur = new Date(from); cur <= to; cur.setUTCDate(cur.getUTCDate() + 1)) {
+        if (cur.getUTCFullYear() === year && cur.getUTCMonth() + 1 === month && workingDaySet.has(cur.getUTCDate())) {
+          sickDays[empName].add(cur.getUTCDate())
+        }
       }
     }
   }
 
-  return { sickDays, partialCaps }
+  return { sickDays, partialLeaveDays }
 }
 
 // ── Parse start/end dates and reduced hours from Alta - Baja - Suspensión sheet ──
@@ -600,9 +605,9 @@ export function extractEmployeeData(
   }
 
   // ── Parse sick leave, start dates, and reduced hours from the same file ────
-  const { sickDays: rawSickMap, partialCaps } = sickLeaveBuffer
+  const { sickDays: rawSickMap, partialLeaveDays: rawPartialLeave } = sickLeaveBuffer
     ? parseSickLeaveFile(sickLeaveBuffer, month, year, workingDaySet)
-    : { sickDays: {} as Record<string, Set<number>>, partialCaps: {} as Record<string, number> }
+    : { sickDays: {} as Record<string, Set<number>>, partialLeaveDays: {} as Record<string, Map<number, number>> }
   const { startDays, endDays, dailyCaps } = sickLeaveBuffer
     ? parseContractAndJornada(sickLeaveBuffer, month, year)
     : { startDays: new Map<string, number>(), endDays: new Map<string, number>(), dailyCaps: new Map<string, number>() }
@@ -696,7 +701,7 @@ export function extractEmployeeData(
       }
     }
 
-    // ── Match sick leave to this employee ──────────────────────────────────
+    // ── Match sick leave and partial leave to this employee ────────────────
     const sickDays = new Set<number>()
     const sickNames = Object.keys(rawSickMap)
     if (sickNames.length > 0) {
@@ -705,6 +710,14 @@ export function extractEmployeeData(
         for (const d of Array.from(rawSickMap[matchedSickName])) sickDays.add(d)
       }
     }
+
+    const partialLeaveNames = Object.keys(rawPartialLeave)
+    const partialLeaveDays: Map<number, number> | undefined = partialLeaveNames.length > 0
+      ? (() => {
+          const matched = matchName(name, partialLeaveNames)
+          return matched ? rawPartialLeave[matched] : undefined
+        })()
+      : undefined
 
     // ── Match start date, end date, and daily cap ─────────────────────────────
     const matchedStartName = startDayNames.length > 0 ? matchName(name, startDayNames) : null
@@ -716,7 +729,7 @@ export function extractEmployeeData(
     const matchedCapName = dailyCapNames.length > 0 ? matchName(name, dailyCapNames) : null
     const dailyCap = matchedCapName ? (dailyCaps.get(matchedCapName) ?? 8) : 8
 
-    result.push({ name, projects, totalHours, travelDays: travelDaysSets, holidayDays, publicHolidays: publicHolidaySet ?? new Set(), sickDays, meetingHours: meetingHoursMap, startDay, endDay, dailyCap })
+    result.push({ name, projects, totalHours, travelDays: travelDaysSets, holidayDays, publicHolidays: publicHolidaySet ?? new Set(), sickDays, meetingHours: meetingHoursMap, startDay, endDay, dailyCap, partialLeaveDays })
   }
 
   return result.sort((a, b) => a.name.localeCompare(b.name))
