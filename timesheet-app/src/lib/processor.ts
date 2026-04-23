@@ -606,12 +606,6 @@ export function extractEmployeeData(
   const { startDays, endDays, dailyCaps } = sickLeaveBuffer
     ? parseContractAndJornada(sickLeaveBuffer, month, year)
     : { startDays: new Map<string, number>(), endDays: new Map<string, number>(), dailyCaps: new Map<string, number>() }
-  // Merge partial-leave caps (e.g. 50% paternity) into dailyCaps, taking the lower value
-  for (const [name, cap] of Object.entries(partialCaps)) {
-    const existing = dailyCaps.get(name)
-    if (existing === undefined || cap < existing) dailyCaps.set(name, cap)
-  }
-
   const startDayNames = Array.from(startDays.keys())
   const endDayNames   = Array.from(endDays.keys())
   const dailyCapNames = Array.from(dailyCaps.keys())
