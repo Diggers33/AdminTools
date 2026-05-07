@@ -59,8 +59,8 @@ export function extractNonWorkingDays(
   for (const item of items) {
     // Try multiple field names — Workdeck API field name varies by version
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = item as any
-    const dateVal: string | undefined = raw.date ?? raw.dateAt ?? raw.date_at ?? raw.startAt ?? raw.startDate
+    const r = item as any
+    const dateVal: string | undefined = r.date ?? r.dateAt ?? r.date_at ?? r.startAt ?? r.startDate
     if (!dateVal) continue
     // Extract only the YYYY-MM-DD portion to avoid timezone shifts on local-time timestamps
     // e.g. "2026-04-21T00:00:00+02:00" → UTC would be Apr 20, but the intended date is Apr 21
@@ -73,11 +73,12 @@ export function extractNonWorkingDays(
 }
 
 export function processLeaveRequests(
-  requests: WorkdeckLeaveRequest[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  requests: any[],
   year: number,
   month: number,
   workingDaySet: Set<number>
-): Record<string, number[]> {
+): Record<string, number[]> {  // keyed by user UUID
   // Fallback keyword list for leave types that don't use the canonical 'Holidays' name
   const LEAVE_KEYWORDS = [
     'annual leave', 'holiday', 'vacation', 'vacacion', 'conge', 'urlaub', 'pto',
@@ -93,23 +94,28 @@ export function processLeaveRequests(
   for (const req of requests) {
     // state: 0=pending (company-set leave like "Vacaciones fijadas por IRIS"), 1=accepted, 2=denied
     // Accept both 0 and 1 — exclude only explicitly denied (2)
-    if (req.state === 2) continue
+    const state = req.state ?? req.status
+    if (state === 2 || state === 'denied' || state === 'rejected') continue
 
-    // Primary: Workdeck canonical leave type name for holidays
-    // Fallback: keyword match on normalised name
-    const typeName = req.leaveType?.name ?? ''
+    // Try multiple field names — Workdeck API field name varies by version
+    const typeName: string = req.leaveType?.name ?? req.type?.name ?? req.leave_type?.name ?? ''
     const isHoliday =
       typeName === 'Holidays' ||
       LEAVE_KEYWORDS.some(kw =>
-        typeName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(kw)
+        typeName.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(kw)
       )
     if (!isHoliday) continue
 
-    const fullName = `${req.user.firstName} ${req.user.lastName}`
+    // Key by user UUID — avoids name format mismatches between leave requests and users-summary
+    const userId: string = req.user?.id ?? req.userId ?? req.user_id ?? ''
+    if (!userId) continue
 
-    // Parse and clamp dates to the selected month
-    let start = parseWdDate(req.startAt.split(' ')[0])
-    let end = parseWdDate(req.endAt.split(' ')[0])
+    // Try multiple field names for dates
+    const startStr: string = req.startAt ?? req.start_at ?? req.startDate ?? req.start ?? ''
+    const endStr: string = req.endAt ?? req.end_at ?? req.endDate ?? req.end ?? ''
+
+    let start = parseWdDate(startStr.split(' ')[0])
+    let end = parseWdDate(endStr.split(' ')[0])
 
     if (isNaN(start.getTime()) || isNaN(end.getTime())) continue
     if (end < monthStart || start > monthEnd) continue
@@ -121,8 +127,8 @@ export function processLeaveRequests(
     while (cur <= end) {
       const day = cur.getDate()
       if (cur.getFullYear() === year && cur.getMonth() + 1 === month && workingDaySet.has(day)) {
-        if (!result[fullName]) result[fullName] = []
-        if (!result[fullName].includes(day)) result[fullName].push(day)
+        if (!result[userId]) result[userId] = []
+        if (!result[userId].includes(day)) result[userId].push(day)
       }
       cur.setDate(cur.getDate() + 1)
     }

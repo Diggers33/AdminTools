@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { processLeaveRequests, processUserEvents, extractNonWorkingDays, WorkdeckLeaveRequest } from '@/lib/workdeck'
+import { processLeaveRequests, processUserEvents, extractNonWorkingDays } from '@/lib/workdeck'
 import { getWorkingDays, matchName } from '@/lib/processor'
 
 export const runtime = 'nodejs'
@@ -77,14 +77,13 @@ export async function POST(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const leaveStateValues = Array.from(new Set((leaveRequests as any[]).map(r => r.state ?? r.status ?? '?'))).slice(0, 10)
 
-  // Process leave requests → per-employee holiday days
-  const holidaysByWdName = processLeaveRequests(leaveRequests, year, month, workingDaySet)
+  // Process leave requests → per-employee holiday days, keyed by user UUID
+  const holidaysByUUID = processLeaveRequests(leaveRequests, year, month, workingDaySet)
 
-  // Map Workdeck name → REPORTS name
+  // Map UUID → REPORTS name (UUID lookup avoids name format mismatches)
   const holidays: Record<string, number[]> = {}
   for (const [repName, uuid] of Array.from(repNameToUUID.entries())) {
-    const wdName = uuidToName.get(uuid)!
-    if (holidaysByWdName[wdName]?.length) holidays[repName] = Array.from(new Set(holidaysByWdName[wdName]))
+    if (holidaysByUUID[uuid]?.length) holidays[repName] = Array.from(new Set(holidaysByUUID[uuid]))
   }
 
   // Build debug payload (also captures the raw response wrapper keys so we can see the data structure)
@@ -99,6 +98,7 @@ export async function POST(req: NextRequest) {
     matchedCount: Object.keys(holidays).length,
     publicHolidaysCount: publicHolidays.length,
     publicHolidayDays: publicHolidays,
+    holidayLeaveRequestCount: Object.values(holidaysByUUID).reduce((s, a) => s + a.length, 0),
   }
 
   // Fetch calendar events for matched UUIDs in batches of 10
