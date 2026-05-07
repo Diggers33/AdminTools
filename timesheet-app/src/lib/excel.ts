@@ -11,7 +11,6 @@ const TOTAL_FILL: ExcelJS.Fill   = { type: 'pattern', pattern: 'solid', fgColor:
 const WEEKEND_FILL: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } }
 const TRAVEL_FILL: ExcelJS.Fill        = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFCC80' } } // amber
 const TRAVEL_LEAVES_FILL: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFAA40' } } // darker amber for T cells
-const HOLIDAY_FILL: ExcelJS.Fill       = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6EFCE' } } // soft green for holiday days
 const SICK_FILL: ExcelJS.Fill          = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC7CE' } } // soft red for sick days
 const PARTIAL_LEAVE_FILL: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2D0F0' } } // soft purple for partial leave (paternity/maternity)
 const PROJECT_FILL: ExcelJS.Fill     = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } }
@@ -103,9 +102,9 @@ function buildMonthBlock(
     const isHolidayCol = !isWknd && !isInactive && !isTravelCol && !isSickCol && (holidayDays?.has(d) ?? false)
     const isPublicHol = !isWknd && !isInactive && !isTravelCol && !isSickCol && !isHolidayCol && (publicHolidays?.has(d) ?? false)
     const label = d <= daysInMonth ? d : null
-    const headerFill = (isWknd || isInactive || isPublicHol) ? WEEKEND_FILL : isTravelCol ? TRAVEL_LEAVES_FILL : isSickCol ? SICK_FILL : isHolidayCol ? HOLIDAY_FILL : HEADER_FILL
-    const headerFont = (isWknd || isInactive || isPublicHol || isTravelCol || isSickCol || isHolidayCol)
-      ? { ...BOLD_FONT, color: { argb: (isWknd || isInactive || isPublicHol) ? 'FF666666' : isTravelCol ? 'FF7D4000' : isSickCol ? 'FF9C0006' : 'FF375623' } }
+    const headerFill = (isWknd || isInactive || isPublicHol || isHolidayCol) ? WEEKEND_FILL : isTravelCol ? TRAVEL_LEAVES_FILL : isSickCol ? SICK_FILL : HEADER_FILL
+    const headerFont = (isWknd || isInactive || isPublicHol || isHolidayCol || isTravelCol || isSickCol)
+      ? { ...BOLD_FONT, color: { argb: (isWknd || isInactive || isPublicHol || isHolidayCol) ? 'FF666666' : isTravelCol ? 'FF7D4000' : 'FF9C0006' } }
       : WHITE_FONT
     cell(ws, startRow + 1, col, label, headerFill, headerFont, CENTER)
   }
@@ -128,13 +127,13 @@ function buildMonthBlock(
     // Partial leave value is the leave fraction (e.g. 0.5 for 50% paternity)
     const partialLeaveVal = isPartialLeave ? Math.round((1 - partialCap / 8) * 100) / 100 : undefined
     const leaveVal = d <= daysInMonth ? (isTravel ? 'T' : isSick ? 'S' : isHoliday ? 1 : isPartialLeave ? partialLeaveVal! : 0) : null
-    const leaveFill = (weekends.has(d) || isInactive || isPublicHol) ? WEEKEND_FILL : isTravel ? TRAVEL_LEAVES_FILL : isSick ? SICK_FILL : isHoliday ? HOLIDAY_FILL : isPartialLeave ? PARTIAL_LEAVE_FILL : LEAVES_FILL
+    const leaveFill = (weekends.has(d) || isInactive || isPublicHol || isHoliday) ? WEEKEND_FILL : isTravel ? TRAVEL_LEAVES_FILL : isSick ? SICK_FILL : isPartialLeave ? PARTIAL_LEAVE_FILL : LEAVES_FILL
     const leaveFont = isTravel
       ? { ...BOLD_FONT, color: { argb: 'FF7D4000' } }
       : isSick
         ? { ...BOLD_FONT, color: { argb: 'FF9C0006' } }
         : isHoliday
-          ? { ...BOLD_FONT, color: { argb: 'FF375623' } }
+          ? { ...BOLD_FONT, color: { argb: 'FF666666' } }
           : isPartialLeave
             ? { ...BOLD_FONT, color: { argb: 'FF4B0082' } }
             : NORMAL_FONT
@@ -213,7 +212,7 @@ function buildMonthBlock(
     } else if (d <= daysInMonth) {
       val = 0 // weekend
     }
-    const otherFill = (weekends.has(d) || isPublicHol || isInactive) ? WEEKEND_FILL : isSick && d <= daysInMonth ? SICK_FILL : isHoliday && d <= daysInMonth ? HOLIDAY_FILL : OTHER_FILL
+    const otherFill = (weekends.has(d) || isPublicHol || isInactive || (isHoliday && d <= daysInMonth)) ? WEEKEND_FILL : isSick && d <= daysInMonth ? SICK_FILL : OTHER_FILL
     cell(ws, otherRow, d + 2, val, otherFill, NORMAL_FONT, CENTER)
   }
   const otc = ws.getCell(otherRow, 34)
@@ -241,7 +240,7 @@ function buildMonthBlock(
       tc.value = daySum
       grandTotal += daySum
     }
-    tc.fill = (weekends.has(d) || isPublicHol || isInactive) ? WEEKEND_FILL : isSick ? SICK_FILL : isHoliday ? HOLIDAY_FILL : TOTAL_FILL
+    tc.fill = (weekends.has(d) || isPublicHol || isInactive || isHoliday) ? WEEKEND_FILL : isSick ? SICK_FILL : TOTAL_FILL
     tc.font = TOTAL_FONT; tc.alignment = CENTER; tc.border = ALL_BORDERS
   }
   const gtc = ws.getCell(totalRow, 34)

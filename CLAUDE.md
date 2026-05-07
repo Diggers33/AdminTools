@@ -32,9 +32,9 @@ There are no tests or linting configured.
 
 **Input files (all multipart form uploads):**
 - **REPORTS** (required) — sheet `DATOS`, columns: `Project`, `Fecha`, `Hours`, `Nombre`, `Apellido`
-- **VIAJES** (optional) — travel days file, parsed by `parseTravelFile()`
-- **Leave file** (optional) — annual leave/holidays, parsed by `parseLeaveFile()`
-- **Sick leave file** (optional) — from sheet `LISTA ALTAS_BAJAS` → `TABLAS`, parsed by `parseSickLeaveFile()`
+- **VIAJES** (optional) — sheet `TRAVEL` or `EXPENSES`, columns: `EMPLEADO`, `PROJECT`/`PROJECT EU`, `FECHA INICIAL`, `FECHA FINAL`; parsed by `parseTravelFile()`
+- **Leave file** (optional) — sheet `data`, columns: `Leave type`, `Employee`, `Year`, `Month`, `Days`; parsed by `parseLeaveFile()`
+- **Sick leave / LISTA file** (optional) — parsed by `parseSickLeaveFile()` (sheet `Enfermedad - Matern. - Patern.`) and `parseContractAndJornada()` (sheet `Alta - Baja - Suspensión`); both sheets use columns `Nombre`, `Primer apellido`, `Segundo apellido`, `Fecha alta`, `Fecha baja`, `Jornada`
 
 **Core flow:**
 1. User uploads files; `/api/preview` parses them and returns available months + employee list.
@@ -46,11 +46,15 @@ There are no tests or linting configured.
 All three API routes (`preview`, `generate`, `verify`) accept raw multipart form data (`bodyParser: false` in `next.config.js`).
 
 **Key files:**
-- **`src/lib/processor.ts`** — All data logic: `parseReportsFile()`, `parseTravelFile()`, `parseLeaveFile()`, `parseSickLeaveFile()`, `extractEmployeeData()`, `distributeHours()`, `matchName()`, `getWorkingDays()`, `processLeaveRequests()`, `processUserEvents()`, `extractNonWorkingDays()`.
-- **`src/lib/excel.ts`** — Excel workbook generation (ExcelJS). Cell colors: travel days → amber, public holidays → green, sick days → red, weekends → gray. A `LEAVES` row encodes: `T` = travel, `S` = sick, `1` = holiday, `0` = working day. Approver name "Colm Digby" is hardcoded.
+- **`src/lib/processor.ts`** — All data logic: `parseReportsFile()`, `parseTravelFile()`, `parseLeaveFile()`, `parseSickLeaveFile()`, `parseContractAndJornada()`, `extractEmployeeData()`, `distributeHours()`, `matchName()`, `getWorkingDays()`, `processLeaveRequests()`, `processUserEvents()`, `extractNonWorkingDays()`.
+- **`src/lib/excel.ts`** — Excel workbook generation (ExcelJS). Cell colors: travel days → amber, sick days → red, partial leave → purple, weekends/public holidays/annual leave → gray. A `LEAVES` row encodes: `T` = travel, `S` = sick, `1` = annual leave, `0` = working day. Approver name "Colm Digby" is hardcoded.
 - **`src/lib/workdeck.ts`** — Shared Workdeck types and date/leave-processing utilities used by both Workdeck API routes.
 
-**`EmployeeMonth` interface key fields:** `travelDays` (project→days map), `publicHolidays` (set of day numbers), `sickDays`, `meetingHours` (per-project per-day), `startDay`/`endDay` (active date range), `dailyCap` (max hours/day, default 8 for reduced schedules).
+**`EmployeeMonth` interface key fields:** `travelDays` (project→days map), `publicHolidays` (set of day numbers), `sickDays`, `partialLeaveDays` (day→fraction map for partial-day leave like paternity), `meetingHours` (per-project per-day), `startDay`/`endDay` (active date range for mid-month contract changes), `dailyCap` (max hours/day — derived from Jornada; 50% Jornada = 4h cap).
+
+**Contract & reduced-hours parsing** (`parseContractAndJornada()`): Extracts `startDay`/`endDay` from the `Alta - Baja - Suspensión` sheet. Seamless same-month transitions (old contract ends + new one starts) keep the employee active all month. Jornada < 1 sets `dailyCap = jornada * 8`; full sick leave (Jornada ≥ 1) blocks the day entirely (`sickDays`); partial leave (Jornada < 1 from the sick sheet) populates `partialLeaveDays` to cap specific days rather than block them.
+
+**Client-side REPORTS caching:** To avoid re-uploading large REPORTS files on every API call, the browser parses REPORTS once into a `ParsedReportsRow[]` and stores compressed JSON in form state. Subsequent calls send the JSON string in a `parsedReports` form field instead of the raw file. All three API routes (`preview`, `generate`, `verify`) check for this field before falling back to buffer parsing.
 
 **Fuzzy matching:** `matchName()` uses token-overlap scoring (60% threshold) for employee names between VIAJES/leave files and REPORTS. Project name matching normalizes case, strips hyphens/spaces, and removes trailing version numbers.
 

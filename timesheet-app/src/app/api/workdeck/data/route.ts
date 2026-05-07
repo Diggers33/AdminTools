@@ -97,6 +97,8 @@ export async function POST(req: NextRequest) {
     sampleLeaveKeys: sampleLeave ? Object.keys(sampleLeave).slice(0, 20) : [],
     sampleLeave,
     matchedCount: Object.keys(holidays).length,
+    publicHolidaysCount: publicHolidays.length,
+    publicHolidayDays: publicHolidays,
   }
 
   // Fetch calendar events for matched UUIDs in batches of 10

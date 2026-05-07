@@ -57,13 +57,15 @@ export function extractNonWorkingDays(
 
   const days = new Set<number>()
   for (const item of items) {
-    if (!item.date) continue
-    const d = new Date(item.date)
-    if (isNaN(d.getTime())) continue
-    // Use UTC date parts to avoid timezone shifts on midnight timestamps
-    if (d.getUTCFullYear() === year && d.getUTCMonth() + 1 === month) {
-      days.add(d.getUTCDate())
-    }
+    // Try multiple field names — Workdeck API field name varies by version
+    const dateVal: string | undefined = item.date ?? item.dateAt ?? item.date_at ?? item.startAt ?? item.startDate
+    if (!dateVal) continue
+    // Extract only the YYYY-MM-DD portion to avoid timezone shifts on local-time timestamps
+    // e.g. "2026-04-21T00:00:00+02:00" → UTC would be Apr 20, but the intended date is Apr 21
+    const dateStr = String(dateVal).slice(0, 10)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue
+    const [y, m, d] = dateStr.split('-').map(Number)
+    if (y === year && m === month) days.add(d)
   }
   return Array.from(days).sort((a, b) => a - b)
 }
