@@ -58,7 +58,9 @@ export function extractNonWorkingDays(
   const days = new Set<number>()
   for (const item of items) {
     // Try multiple field names — Workdeck API field name varies by version
-    const dateVal: string | undefined = item.date ?? item.dateAt ?? item.date_at ?? item.startAt ?? item.startDate
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = item as any
+    const dateVal: string | undefined = raw.date ?? raw.dateAt ?? raw.date_at ?? raw.startAt ?? raw.startDate
     if (!dateVal) continue
     // Extract only the YYYY-MM-DD portion to avoid timezone shifts on local-time timestamps
     // e.g. "2026-04-21T00:00:00+02:00" → UTC would be Apr 20, but the intended date is Apr 21
